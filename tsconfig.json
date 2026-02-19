@@ -25,5 +25,5 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules", "0g-agent-nft", "0g-ts-sdk", "0g-storage-ts-starter-kit", "0g-storage-web-starter-kit", "contracts"]
 }
