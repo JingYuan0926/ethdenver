@@ -29,5 +29,13 @@ export default defineConfig({
       url: process.env.ZG_TESTNET_RPC_URL!,
       accounts: [process.env.ZG_TESTNET_PRIVATE_KEY!],
     },
+    hederaTestnet: {
+      type: "http",
+      chainType: "l1",
+      url: process.env.HEDERA_RPC_URL || "https://testnet.hashio.io/api",
+      accounts: process.env.HEDERA_PRIVATE_KEY
+        ? [process.env.HEDERA_PRIVATE_KEY]
+        : [],
+    },
   },
 });
