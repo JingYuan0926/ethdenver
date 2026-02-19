@@ -1,11 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { createPublicClient, http } from "viem";
 import { SPARKINFT_ADDRESS, SPARKINFT_ABI } from "@/lib/sparkinft-abi";
-import { ethers } from "ethers";
 import { Indexer } from "@0gfoundation/0g-ts-sdk";
-import { writeFileSync, readFileSync, unlinkSync } from "fs";
+import { readFileSync, unlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+import { decrypt } from "@/lib/encrypt";
 
 const ZG_RPC = "https://evmrpc-testnet.0g.ai";
 const ZG_INDEXER = "https://indexer-storage-testnet-turbo.0g.ai";
@@ -41,6 +41,7 @@ interface AgentConfig {
   botId?: string;
   modelProvider: string;
   apiKey: string;
+  encrypted?: boolean;
   systemPrompt: string;
   memory?: Record<string, unknown>;
   persona?: string;
@@ -214,17 +215,29 @@ export default async function handler(
       agentConfig = await fetchConfigFromStorage(iDatas[0].dataDescription);
     }
 
-    // 4. If we have a stored config with API key — call the provider
+    // 4. If we have a stored config with API key — decrypt and call the provider
     if (agentConfig && agentConfig.apiKey && agentConfig.modelProvider) {
       const provider = agentConfig.modelProvider.toLowerCase();
       const systemPrompt = agentConfig.systemPrompt || `You are ${p.botId}.`;
       const model = PROVIDER_DEFAULT_MODELS[provider] || "gpt-4o-mini";
 
+      // Decrypt the API key (encrypted with AES-256-GCM on upload)
+      let realApiKey: string;
+      try {
+        realApiKey = agentConfig.encrypted
+          ? decrypt(agentConfig.apiKey)
+          : agentConfig.apiKey;
+      } catch {
+        return res.status(500).json({
+          error: "Failed to decrypt agent API key. Config may be corrupted.",
+        });
+      }
+
       let reply: string;
 
       if (provider === "anthropic") {
         reply = await callAnthropic(
-          agentConfig.apiKey,
+          realApiKey,
           model,
           systemPrompt,
           message
@@ -234,7 +247,7 @@ export default async function handler(
           PROVIDER_ENDPOINTS[provider] || PROVIDER_ENDPOINTS.openai;
         reply = await callOpenAICompatible(
           endpoint,
-          agentConfig.apiKey,
+          realApiKey,
           model,
           systemPrompt,
           message

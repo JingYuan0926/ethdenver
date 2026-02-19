@@ -5,6 +5,7 @@ import { writeFileSync, unlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { keccak256, toUtf8Bytes } from "ethers";
+import { encrypt } from "@/lib/encrypt";
 
 const ZG_RPC = "https://evmrpc-testnet.0g.ai";
 const ZG_INDEXER = "https://indexer-storage-testnet-turbo.0g.ai";
@@ -44,14 +45,17 @@ export default async function handler(
   }
 
   try {
-    // Build the agent config bundle — this is what gets stored on 0G Storage
-    // In production, this would be encrypted with the owner's public key
+    // Build the agent config bundle — stored on 0G Storage
+    // API key is encrypted with AES-256-GCM before upload
+    const encryptedApiKey = encrypt(apiKey);
+
     const agentConfig = {
       version: "1.0.0",
       botId,
       persona: persona || botId,
       modelProvider, // "openai" | "anthropic" | "groq" | "deepseek"
-      apiKey, // user's own API key
+      apiKey: encryptedApiKey, // AES-256-GCM encrypted
+      encrypted: true, // flag to indicate encryption
       systemPrompt,
       memory: memory || {},
       domainTags: domainTags || "",

@@ -23,6 +23,36 @@ export default function HederaPage() {
   const [transferAmount, setTransferAmount] = useState("100");
   const [balanceAccountId, setBalanceAccountId] = useState("");
 
+  // HCS-20 state
+  const [hcs20TopicId, setHcs20TopicId] = useState("");
+  const [hcs20TopicResult, setHcs20TopicResult] = useState<ApiResult | null>(null);
+  const [deployTick, setDeployTick] = useState("spark");
+  const [deployName, setDeployName] = useState("SPARK Points");
+  const [deployMax, setDeployMax] = useState("1000000");
+  const [deployLim, setDeployLim] = useState("10000");
+  const [deployResult, setDeployResult] = useState<ApiResult | null>(null);
+  const [mintTick, setMintTick] = useState("spark");
+  const [mintTo, setMintTo] = useState("");
+  const [mintAmt, setMintAmt] = useState("1000");
+  const [mintResult, setMintResult] = useState<ApiResult | null>(null);
+  const [xferTick, setXferTick] = useState("spark");
+  const [xferFrom, setXferFrom] = useState("");
+  const [xferTo, setXferTo] = useState("");
+  const [xferAmt, setXferAmt] = useState("100");
+  const [xferResult, setXferResult] = useState<ApiResult | null>(null);
+  const [burnTick, setBurnTick] = useState("spark");
+  const [burnFrom, setBurnFrom] = useState("");
+  const [burnAmt, setBurnAmt] = useState("50");
+  const [burnResult, setBurnResult] = useState<ApiResult | null>(null);
+
+  // AI Agent Voting state
+  const [voteTopicId, setVoteTopicId] = useState("");
+  const [voteSetupResult, setVoteSetupResult] = useState<ApiResult | null>(null);
+  const [voteVoter, setVoteVoter] = useState("");
+  const [voteTarget, setVoteTarget] = useState("");
+  const [voteDirection, setVoteDirection] = useState<"up" | "down">("up");
+  const [voteResult, setVoteResult] = useState<ApiResult | null>(null);
+
   async function callApi(
     endpoint: string,
     body: Record<string, string> = {}
@@ -157,6 +187,159 @@ export default function HederaPage() {
       setBalanceResult(result);
     } catch (err) {
       setBalanceResult({ success: false, error: String(err) });
+    }
+    setLoading(null);
+  }
+
+  async function handleCreateHcs20Topic() {
+    setLoading("hcs20topic");
+    try {
+      const result = await callApi("create-topic");
+      setHcs20TopicResult(result);
+      if (result.success && result.topicId) {
+        setHcs20TopicId(result.topicId as string);
+      }
+    } catch (err) {
+      setHcs20TopicResult({ success: false, error: String(err) });
+    }
+    setLoading(null);
+  }
+
+  async function callHcs20(
+    op: string,
+    params: Record<string, string>
+  ): Promise<ApiResult> {
+    const res = await fetch("/api/hedera/hcs20", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topicId: hcs20TopicId, op, ...params }),
+    });
+    return res.json();
+  }
+
+  async function handleHcs20Deploy() {
+    if (!hcs20TopicId) {
+      setDeployResult({ success: false, error: "Create a topic first" });
+      return;
+    }
+    setLoading("hcs20deploy");
+    try {
+      const result = await callHcs20("deploy", {
+        name: deployName,
+        tick: deployTick,
+        max: deployMax,
+        ...(deployLim && { lim: deployLim }),
+      });
+      setDeployResult(result);
+    } catch (err) {
+      setDeployResult({ success: false, error: String(err) });
+    }
+    setLoading(null);
+  }
+
+  async function handleHcs20Mint() {
+    if (!hcs20TopicId) {
+      setMintResult({ success: false, error: "Create a topic first" });
+      return;
+    }
+    setLoading("hcs20mint");
+    try {
+      const result = await callHcs20("mint", {
+        tick: mintTick,
+        amt: mintAmt,
+        to: mintTo,
+      });
+      setMintResult(result);
+    } catch (err) {
+      setMintResult({ success: false, error: String(err) });
+    }
+    setLoading(null);
+  }
+
+  async function handleHcs20Transfer() {
+    if (!hcs20TopicId) {
+      setXferResult({ success: false, error: "Create a topic first" });
+      return;
+    }
+    setLoading("hcs20xfer");
+    try {
+      const result = await callHcs20("transfer", {
+        tick: xferTick,
+        amt: xferAmt,
+        from: xferFrom,
+        to: xferTo,
+      });
+      setXferResult(result);
+    } catch (err) {
+      setXferResult({ success: false, error: String(err) });
+    }
+    setLoading(null);
+  }
+
+  async function handleHcs20Burn() {
+    if (!hcs20TopicId) {
+      setBurnResult({ success: false, error: "Create a topic first" });
+      return;
+    }
+    setLoading("hcs20burn");
+    try {
+      const result = await callHcs20("burn", {
+        tick: burnTick,
+        amt: burnAmt,
+        from: burnFrom,
+      });
+      setBurnResult(result);
+    } catch (err) {
+      setBurnResult({ success: false, error: String(err) });
+    }
+    setLoading(null);
+  }
+
+  async function handleVoteSetup() {
+    setLoading("votesetup");
+    try {
+      const res = await fetch("/api/hedera/ai-vote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "setup" }),
+      });
+      const result = await res.json();
+      setVoteSetupResult(result);
+      if (result.success && result.topicId) {
+        setVoteTopicId(result.topicId);
+      }
+    } catch (err) {
+      setVoteSetupResult({ success: false, error: String(err) });
+    }
+    setLoading(null);
+  }
+
+  async function handleCastVote() {
+    if (!voteTopicId) {
+      setVoteResult({ success: false, error: "Setup a voting topic first" });
+      return;
+    }
+    if (!voteVoter || !voteTarget) {
+      setVoteResult({ success: false, error: "Voter and target are required" });
+      return;
+    }
+    setLoading("castvote");
+    try {
+      const res = await fetch("/api/hedera/ai-vote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "vote",
+          topicId: voteTopicId,
+          voter: voteVoter,
+          target: voteTarget,
+          vote: voteDirection,
+        }),
+      });
+      const result = await res.json();
+      setVoteResult(result);
+    } catch (err) {
+      setVoteResult({ success: false, error: String(err) });
     }
     setLoading(null);
   }
@@ -330,9 +513,328 @@ export default function HederaPage() {
         </div>
       </section>
 
+      <hr style={{ margin: "24px 0", borderColor: "#6366f1" }} />
+
+      <h1 style={{ color: "#6366f1" }}>HCS-20 Auditable Points</h1>
+      <p style={{ color: "#888" }}>
+        Inscribe JSON messages on HCS topics to deploy, mint, transfer &amp; burn
+        points (no HTS needed).
+      </p>
+
+      {/* HCS-20: Create Topic */}
+      <section style={{ margin: "24px 0" }}>
+        <h2>8. Create HCS-20 Topic</h2>
+        <p style={{ color: "#888", fontSize: 13 }}>
+          Creates a new HCS topic to hold your HCS-20 point inscriptions.
+        </p>
+        <div>
+          <label>
+            Topic ID (or create new):{" "}
+            <input
+              value={hcs20TopicId}
+              onChange={(e) => setHcs20TopicId(e.target.value)}
+              placeholder="0.0.XXXXX"
+              style={{ width: 200, fontFamily: "monospace" }}
+            />
+          </label>
+        </div>
+        <button
+          onClick={handleCreateHcs20Topic}
+          disabled={loading === "hcs20topic"}
+          style={{ marginTop: 8 }}
+        >
+          {loading === "hcs20topic" ? "Creating..." : "Create New Topic"}
+        </button>
+        {hcs20TopicResult && <ResultBlock data={hcs20TopicResult} />}
+      </section>
+
+      {/* HCS-20: Deploy Points */}
+      <section style={{ margin: "24px 0" }}>
+        <h2>9. Deploy Points (HCS-20)</h2>
+        <p style={{ color: "#888", fontSize: 13 }}>
+          Register a new point type on the topic.
+        </p>
+        <div>
+          <label>
+            Ticker:{" "}
+            <input
+              value={deployTick}
+              onChange={(e) => setDeployTick(e.target.value)}
+              style={{ width: 150, fontFamily: "monospace" }}
+            />
+          </label>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <label>
+            Name:{" "}
+            <input
+              value={deployName}
+              onChange={(e) => setDeployName(e.target.value)}
+              style={{ width: 250, fontFamily: "monospace" }}
+            />
+          </label>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <label>
+            Max Supply:{" "}
+            <input
+              value={deployMax}
+              onChange={(e) => setDeployMax(e.target.value)}
+              style={{ width: 150, fontFamily: "monospace" }}
+            />
+          </label>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <label>
+            Mint Limit (per tx):{" "}
+            <input
+              value={deployLim}
+              onChange={(e) => setDeployLim(e.target.value)}
+              style={{ width: 150, fontFamily: "monospace" }}
+            />
+          </label>
+        </div>
+        <button
+          onClick={handleHcs20Deploy}
+          disabled={loading === "hcs20deploy"}
+          style={{ marginTop: 8 }}
+        >
+          {loading === "hcs20deploy" ? "Deploying..." : "Deploy Points"}
+        </button>
+        {deployResult && <ResultBlock data={deployResult} />}
+      </section>
+
+      {/* HCS-20: Mint Points */}
+      <section style={{ margin: "24px 0" }}>
+        <h2>10. Mint Points (HCS-20)</h2>
+        <div>
+          <label>
+            Ticker:{" "}
+            <input
+              value={mintTick}
+              onChange={(e) => setMintTick(e.target.value)}
+              style={{ width: 150, fontFamily: "monospace" }}
+            />
+          </label>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <label>
+            To (Account ID):{" "}
+            <input
+              value={mintTo}
+              onChange={(e) => setMintTo(e.target.value)}
+              placeholder="0.0.XXXXX"
+              style={{ width: 200, fontFamily: "monospace" }}
+            />
+          </label>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <label>
+            Amount:{" "}
+            <input
+              value={mintAmt}
+              onChange={(e) => setMintAmt(e.target.value)}
+              style={{ width: 150, fontFamily: "monospace" }}
+            />
+          </label>
+        </div>
+        <button
+          onClick={handleHcs20Mint}
+          disabled={loading === "hcs20mint"}
+          style={{ marginTop: 8 }}
+        >
+          {loading === "hcs20mint" ? "Minting..." : "Mint Points"}
+        </button>
+        {mintResult && <ResultBlock data={mintResult} />}
+      </section>
+
+      {/* HCS-20: Transfer Points */}
+      <section style={{ margin: "24px 0" }}>
+        <h2>11. Transfer Points (HCS-20)</h2>
+        <div>
+          <label>
+            Ticker:{" "}
+            <input
+              value={xferTick}
+              onChange={(e) => setXferTick(e.target.value)}
+              style={{ width: 150, fontFamily: "monospace" }}
+            />
+          </label>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <label>
+            From (Account ID):{" "}
+            <input
+              value={xferFrom}
+              onChange={(e) => setXferFrom(e.target.value)}
+              placeholder="0.0.XXXXX"
+              style={{ width: 200, fontFamily: "monospace" }}
+            />
+          </label>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <label>
+            To (Account ID):{" "}
+            <input
+              value={xferTo}
+              onChange={(e) => setXferTo(e.target.value)}
+              placeholder="0.0.XXXXX"
+              style={{ width: 200, fontFamily: "monospace" }}
+            />
+          </label>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <label>
+            Amount:{" "}
+            <input
+              value={xferAmt}
+              onChange={(e) => setXferAmt(e.target.value)}
+              style={{ width: 150, fontFamily: "monospace" }}
+            />
+          </label>
+        </div>
+        <button
+          onClick={handleHcs20Transfer}
+          disabled={loading === "hcs20xfer"}
+          style={{ marginTop: 8 }}
+        >
+          {loading === "hcs20xfer" ? "Transferring..." : "Transfer Points"}
+        </button>
+        {xferResult && <ResultBlock data={xferResult} />}
+      </section>
+
+      {/* HCS-20: Burn Points */}
+      <section style={{ margin: "24px 0" }}>
+        <h2>12. Burn Points (HCS-20)</h2>
+        <div>
+          <label>
+            Ticker:{" "}
+            <input
+              value={burnTick}
+              onChange={(e) => setBurnTick(e.target.value)}
+              style={{ width: 150, fontFamily: "monospace" }}
+            />
+          </label>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <label>
+            From (Account ID):{" "}
+            <input
+              value={burnFrom}
+              onChange={(e) => setBurnFrom(e.target.value)}
+              placeholder="0.0.XXXXX"
+              style={{ width: 200, fontFamily: "monospace" }}
+            />
+          </label>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <label>
+            Amount:{" "}
+            <input
+              value={burnAmt}
+              onChange={(e) => setBurnAmt(e.target.value)}
+              style={{ width: 150, fontFamily: "monospace" }}
+            />
+          </label>
+        </div>
+        <button
+          onClick={handleHcs20Burn}
+          disabled={loading === "hcs20burn"}
+          style={{ marginTop: 8 }}
+        >
+          {loading === "hcs20burn" ? "Burning..." : "Burn Points"}
+        </button>
+        {burnResult && <ResultBlock data={burnResult} />}
+      </section>
+
+      <hr style={{ margin: "24px 0", borderColor: "#f59e0b" }} />
+
+      <h1 style={{ color: "#f59e0b" }}>AI Agent Reputation Voting</h1>
+      <p style={{ color: "#888" }}>
+        Agents upvote/downvote each other via HCS-20 on a private topic.
+        Server controls all writes (submit key).
+      </p>
+
+      {/* AI Vote: Setup */}
+      <section style={{ margin: "24px 0" }}>
+        <h2>13. Setup Voting Topic</h2>
+        <p style={{ color: "#888", fontSize: 13 }}>
+          Creates a private topic + deploys &quot;upvote&quot; and &quot;downvote&quot; tickers.
+        </p>
+        <div>
+          <label>
+            Voting Topic ID (or create new):{" "}
+            <input
+              value={voteTopicId}
+              onChange={(e) => setVoteTopicId(e.target.value)}
+              placeholder="0.0.XXXXX"
+              style={{ width: 200, fontFamily: "monospace" }}
+            />
+          </label>
+        </div>
+        <button
+          onClick={handleVoteSetup}
+          disabled={loading === "votesetup"}
+          style={{ marginTop: 8 }}
+        >
+          {loading === "votesetup" ? "Setting up..." : "Create Voting Topic"}
+        </button>
+        {voteSetupResult && <ResultBlock data={voteSetupResult} />}
+      </section>
+
+      {/* AI Vote: Cast Vote */}
+      <section style={{ margin: "24px 0" }}>
+        <h2>14. Cast Vote</h2>
+        <div>
+          <label>
+            Voter (Agent ID):{" "}
+            <input
+              value={voteVoter}
+              onChange={(e) => setVoteVoter(e.target.value)}
+              placeholder="agent-alice"
+              style={{ width: 200, fontFamily: "monospace" }}
+            />
+          </label>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <label>
+            Target (Account ID):{" "}
+            <input
+              value={voteTarget}
+              onChange={(e) => setVoteTarget(e.target.value)}
+              placeholder="0.0.XXXXX"
+              style={{ width: 200, fontFamily: "monospace" }}
+            />
+          </label>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <label>
+            Vote:{" "}
+            <select
+              value={voteDirection}
+              onChange={(e) => setVoteDirection(e.target.value as "up" | "down")}
+              style={{ fontFamily: "monospace" }}
+            >
+              <option value="up">Upvote (+1)</option>
+              <option value="down">Downvote (-1)</option>
+            </select>
+          </label>
+        </div>
+        <button
+          onClick={handleCastVote}
+          disabled={loading === "castvote"}
+          style={{ marginTop: 8 }}
+        >
+          {loading === "castvote" ? "Voting..." : "Cast Vote"}
+        </button>
+        {voteResult && <ResultBlock data={voteResult} />}
+      </section>
+
+      <hr style={{ margin: "24px 0" }} />
+
       {/* Account: Balance Query */}
       <section style={{ margin: "24px 0" }}>
-        <h2>7. Check Balance</h2>
+        <h2>15. Check Balance</h2>
         <div>
           <label>
             Account ID:{" "}

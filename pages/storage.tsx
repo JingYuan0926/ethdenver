@@ -10,11 +10,13 @@ export default function StoragePage() {
   const [uploadContent, setUploadContent] = useState(
     '{"type":"knowledge-item","domain":"hedera-sdk","content":"Use SDK v0.48+. The token transfer bug in v0.47 was fixed.","author":"spark-bot-001"}'
   );
+  const [uploadEncrypt, setUploadEncrypt] = useState(false);
   const [uploadResult, setUploadResult] = useState<ApiResult | null>(null);
   const [uploadLoading, setUploadLoading] = useState(false);
 
   // Download state
   const [rootHash, setRootHash] = useState("");
+  const [downloadDecrypt, setDownloadDecrypt] = useState(false);
   const [downloadResult, setDownloadResult] = useState<ApiResult | null>(null);
   const [downloadLoading, setDownloadLoading] = useState(false);
 
@@ -42,7 +44,12 @@ export default function StoragePage() {
     setUploadLoading(true);
     setUploadResult(null);
     try {
-      const result = await callApi("upload", { content: uploadContent });
+      const res = await fetch("/api/storage/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: uploadContent, encrypted: uploadEncrypt }),
+      });
+      const result = await res.json();
       setUploadResult(result);
       if (result.success && result.rootHash) {
         setRootHash(result.rootHash as string);
@@ -61,7 +68,12 @@ export default function StoragePage() {
     setDownloadLoading(true);
     setDownloadResult(null);
     try {
-      const result = await callApi("download", { rootHash });
+      const res = await fetch("/api/storage/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rootHash, decrypt: downloadDecrypt }),
+      });
+      const result = await res.json();
       setDownloadResult(result);
     } catch (err) {
       setDownloadResult({ success: false, error: String(err) });
@@ -125,12 +137,39 @@ export default function StoragePage() {
             />
           </label>
         </div>
+        <div
+          style={{
+            marginTop: 12,
+            padding: 10,
+            background: uploadEncrypt ? "#fffbeb" : "#f8fafc",
+            border: uploadEncrypt ? "2px solid #f59e0b" : "1px solid #e2e8f0",
+            borderRadius: 6,
+          }}
+        >
+          <label style={{ cursor: "pointer", fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={uploadEncrypt}
+              onChange={(e) => setUploadEncrypt(e.target.checked)}
+              style={{ marginRight: 8 }}
+            />
+            <strong>Encrypt before upload</strong> (AES-256-GCM)
+          </label>
+          <p style={{ color: "#888", fontSize: 11, margin: "4px 0 0 24px" }}>
+            Content is encrypted server-side before uploading to 0G Storage.
+            Only this SPARK node can decrypt it.
+          </p>
+        </div>
         <button
           onClick={handleUpload}
           disabled={uploadLoading}
           style={{ marginTop: 8 }}
         >
-          {uploadLoading ? "Uploading to 0G..." : "Upload to 0G Storage"}
+          {uploadLoading
+            ? "Uploading to 0G..."
+            : uploadEncrypt
+              ? "Encrypt & Upload to 0G Storage"
+              : "Upload to 0G Storage"}
         </button>
         {uploadResult && <ResultBlock data={uploadResult} />}
       </section>
@@ -156,6 +195,29 @@ export default function StoragePage() {
             />
           </label>
         </div>
+        <div
+          style={{
+            marginTop: 12,
+            padding: 10,
+            background: downloadDecrypt ? "#fffbeb" : "#f8fafc",
+            border: downloadDecrypt ? "2px solid #f59e0b" : "1px solid #e2e8f0",
+            borderRadius: 6,
+          }}
+        >
+          <label style={{ cursor: "pointer", fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={downloadDecrypt}
+              onChange={(e) => setDownloadDecrypt(e.target.checked)}
+              style={{ marginRight: 8 }}
+            />
+            <strong>Decrypt after download</strong> (AES-256-GCM)
+          </label>
+          <p style={{ color: "#888", fontSize: 11, margin: "4px 0 0 24px" }}>
+            Decrypt content that was encrypted before upload. Fails if content
+            is not encrypted or key mismatch.
+          </p>
+        </div>
         <button
           onClick={handleDownload}
           disabled={downloadLoading}
@@ -163,7 +225,9 @@ export default function StoragePage() {
         >
           {downloadLoading
             ? "Downloading from 0G..."
-            : "Download & Verify"}
+            : downloadDecrypt
+              ? "Download & Decrypt"
+              : "Download & Verify"}
         </button>
         {downloadResult && <ResultBlock data={downloadResult} />}
       </section>

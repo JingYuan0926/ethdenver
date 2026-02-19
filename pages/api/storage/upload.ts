@@ -4,6 +4,7 @@ import { ethers } from "ethers";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { encrypt } from "@/lib/encrypt";
 
 const RPC_URL = "https://evmrpc-testnet.0g.ai";
 const INDEXER_RPC = "https://indexer-storage-testnet-turbo.0g.ai";
@@ -24,7 +25,7 @@ export default async function handler(
     });
   }
 
-  const { content } = req.body;
+  const { content, encrypted: shouldEncrypt } = req.body;
   if (!content || typeof content !== "string") {
     return res.status(400).json({
       success: false,
@@ -32,12 +33,15 @@ export default async function handler(
     });
   }
 
+  // Optionally encrypt content before uploading
+  const finalContent = shouldEncrypt ? encrypt(content) : content;
+
   // Write content to a temp file
   const tmpDir = os.tmpdir();
   const tmpFile = path.join(tmpDir, `spark-upload-${Date.now()}.txt`);
 
   try {
-    fs.writeFileSync(tmpFile, content, "utf-8");
+    fs.writeFileSync(tmpFile, finalContent, "utf-8");
 
     // Create signer
     const provider = new ethers.JsonRpcProvider(RPC_URL);
@@ -71,8 +75,11 @@ export default async function handler(
       success: true,
       rootHash,
       txHash: "txHash" in uploadResult ? uploadResult.txHash : uploadResult.txHashes[0],
+      encrypted: !!shouldEncrypt,
       contentLength: content.length,
-      message: "Content uploaded to 0G Storage (immutable, content-addressed)",
+      message: shouldEncrypt
+        ? "Encrypted content uploaded to 0G Storage (AES-256-GCM)"
+        : "Content uploaded to 0G Storage (immutable, content-addressed)",
     });
   } catch (err) {
     return res.status(500).json({

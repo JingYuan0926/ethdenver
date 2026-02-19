@@ -3,6 +3,7 @@ import { Indexer } from "@0gfoundation/0g-ts-sdk";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { decrypt } from "@/lib/encrypt";
 
 const INDEXER_RPC = "https://indexer-storage-testnet-turbo.0g.ai";
 
@@ -14,7 +15,7 @@ export default async function handler(
     return res.status(405).json({ success: false, error: "Method not allowed" });
   }
 
-  const { rootHash } = req.body;
+  const { rootHash, decrypt: shouldDecrypt } = req.body;
   if (!rootHash || typeof rootHash !== "string") {
     return res.status(400).json({
       success: false,
@@ -37,7 +38,23 @@ export default async function handler(
     }
 
     // Read downloaded content
-    const content = fs.readFileSync(tmpFile, "utf-8");
+    const rawContent = fs.readFileSync(tmpFile, "utf-8");
+
+    // Optionally decrypt
+    let content = rawContent;
+    let decrypted = false;
+    if (shouldDecrypt) {
+      try {
+        content = decrypt(rawContent);
+        decrypted = true;
+      } catch {
+        return res.status(400).json({
+          success: false,
+          error: "Decryption failed. Content may not be encrypted or key mismatch.",
+          rawContent,
+        });
+      }
+    }
 
     return res.status(200).json({
       success: true,
@@ -45,7 +62,10 @@ export default async function handler(
       content,
       contentLength: content.length,
       verified: true,
-      message: "Content downloaded from 0G Storage with Merkle proof verification",
+      decrypted,
+      message: decrypted
+        ? "Encrypted content downloaded and decrypted from 0G Storage"
+        : "Content downloaded from 0G Storage with Merkle proof verification",
     });
   } catch (err) {
     return res.status(500).json({
