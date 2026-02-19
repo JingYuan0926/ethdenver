@@ -48,7 +48,8 @@ export default function HederaPage() {
   // AI Agent Voting state
   const [voteTopicId, setVoteTopicId] = useState("");
   const [voteSetupResult, setVoteSetupResult] = useState<ApiResult | null>(null);
-  const [voteVoter, setVoteVoter] = useState("");
+  const [agentAccountId, setAgentAccountId] = useState("");
+  const [agentPrivateKey, setAgentPrivateKey] = useState("");
   const [voteTarget, setVoteTarget] = useState("");
   const [voteDirection, setVoteDirection] = useState<"up" | "down">("up");
   const [voteResult, setVoteResult] = useState<ApiResult | null>(null);
@@ -319,8 +320,8 @@ export default function HederaPage() {
       setVoteResult({ success: false, error: "Setup a voting topic first" });
       return;
     }
-    if (!voteVoter || !voteTarget) {
-      setVoteResult({ success: false, error: "Voter and target are required" });
+    if (!agentAccountId || !agentPrivateKey || !voteTarget) {
+      setVoteResult({ success: false, error: "Agent account, private key, and target are required" });
       return;
     }
     setLoading("castvote");
@@ -331,7 +332,8 @@ export default function HederaPage() {
         body: JSON.stringify({
           action: "vote",
           topicId: voteTopicId,
-          voter: voteVoter,
+          agentAccountId,
+          agentPrivateKey,
           target: voteTarget,
           vote: voteDirection,
         }),
@@ -751,8 +753,8 @@ export default function HederaPage() {
 
       <h1 style={{ color: "#f59e0b" }}>AI Agent Reputation Voting</h1>
       <p style={{ color: "#888" }}>
-        Agents upvote/downvote each other via HCS-20 on a private topic.
-        Server controls all writes (submit key).
+        Each agent holds its own key and signs votes on-chain.
+        The payer proves who voted — no central server needed.
       </p>
 
       {/* AI Vote: Setup */}
@@ -785,20 +787,34 @@ export default function HederaPage() {
       {/* AI Vote: Cast Vote */}
       <section style={{ margin: "24px 0" }}>
         <h2>14. Cast Vote</h2>
+        <p style={{ color: "#888", fontSize: 13 }}>
+          Each agent signs with its own key. The payer on-chain proves who voted.
+        </p>
         <div>
           <label>
-            Voter (Agent ID):{" "}
+            Agent Account ID:{" "}
             <input
-              value={voteVoter}
-              onChange={(e) => setVoteVoter(e.target.value)}
-              placeholder="agent-alice"
+              value={agentAccountId}
+              onChange={(e) => setAgentAccountId(e.target.value)}
+              placeholder="0.0.XXXXX"
               style={{ width: 200, fontFamily: "monospace" }}
             />
           </label>
         </div>
         <div style={{ marginTop: 8 }}>
           <label>
-            Target (Account ID):{" "}
+            Agent Private Key:{" "}
+            <input
+              value={agentPrivateKey}
+              onChange={(e) => setAgentPrivateKey(e.target.value)}
+              placeholder="302e..."
+              style={{ width: 400, fontFamily: "monospace", fontSize: 11 }}
+            />
+          </label>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <label>
+            Target (Account ID to vote on):{" "}
             <input
               value={voteTarget}
               onChange={(e) => setVoteTarget(e.target.value)}
