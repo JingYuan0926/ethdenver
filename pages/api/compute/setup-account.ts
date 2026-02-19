@@ -9,7 +9,7 @@ export default async function handler(
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { action, amount, provider: providerAddress } = req.body;
+  const { action, amount, provider: providerAddress, service } = req.body;
 
   if (!action) {
     return res.status(400).json({
@@ -50,14 +50,16 @@ export default async function handler(
       const amtFloat = Number(amount) || 0.1;
       const neuron = BigInt(Math.floor(amtFloat * 1e18));
 
-      await broker.ledger.transferFund(providerAddress, "inference", neuron);
+      const serviceType = service === "fine-tuning" ? "fine-tuning" : "inference";
+      await broker.ledger.transferFund(providerAddress, serviceType, neuron);
       return res.status(200).json({
         success: true,
         action: "transfer",
         provider: providerAddress,
         amount: amtFloat,
+        service: serviceType,
         neuron: neuron.toString(),
-        message: `Transferred ${amtFloat} A0GI to provider sub-account`,
+        message: `Transferred ${amtFloat} A0GI to provider ${serviceType} sub-account`,
       });
     }
 

@@ -1,3 +1,11 @@
+// Polyfill: 0G SDK + axios reference window.location at load time (server-side)
+if (typeof globalThis.window === "undefined") {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (globalThis as any).window = {
+    location: { protocol: "https:", host: "localhost", href: "https://localhost" },
+  };
+}
+
 import { ethers } from "ethers";
 import { createZGComputeNetworkBroker } from "@0glabs/0g-serving-broker";
 

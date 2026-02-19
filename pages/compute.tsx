@@ -59,7 +59,7 @@ export default function ComputePage() {
   const [ftServices, setFtServices] = useState<FTServiceItem[]>([]);
   const [ftServicesResult, setFtServicesResult] = useState<ApiResult | null>(null);
   const [ftModels, setFtModels] = useState<ApiResult | null>(null);
-  const [ftProvider, setFtProvider] = useState("");
+  const [ftProvider, setFtProvider] = useState("0xA02b95Aa6886b1116C4f334eDe00381511E31A09");
   const [ftModel, setFtModel] = useState("Qwen2.5-0.5B-Instruct");
   const [ftDataset, setFtDataset] = useState(
     JSON.stringify(
@@ -123,6 +123,12 @@ export default function ComputePage() {
       if (action === "transfer") {
         body.amount = transferAmount;
         body.provider = transferProvider;
+      }
+      if (action === "transfer-ft") {
+        body.action = "transfer";
+        body.amount = transferAmount;
+        body.provider = ftProvider || transferProvider;
+        body.service = "fine-tuning";
       }
       const res = await fetch("/api/compute/setup-account", {
         method: "POST",
@@ -514,7 +520,16 @@ export default function ComputePage() {
             >
               {loading === "account-transfer"
                 ? "Transferring..."
-                : "Transfer to Provider"}
+                : "Transfer (Inference)"}
+            </button>
+            <button
+              onClick={() => handleAccountAction("transfer-ft")}
+              disabled={loading === "account-transfer-ft"}
+              style={{ marginLeft: 8 }}
+            >
+              {loading === "account-transfer-ft"
+                ? "Transferring..."
+                : "Transfer (Fine-Tuning)"}
             </button>
           </div>
         </div>
