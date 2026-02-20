@@ -22,7 +22,7 @@ export default function SparkPage() {
   const [kContent, setKContent] = useState(
     "Uniswap V3 introduced concentrated liquidity, allowing LPs to allocate capital within custom price ranges."
   );
-  const [kDomainTags, setKDomainTags] = useState("defi,uniswap");
+  const [kCategory, setKCategory] = useState("blockchain");
   const [kPrivateKey, setKPrivateKey] = useState("");
   const [knowledgeResult, setKnowledgeResult] = useState<ApiResult | null>(
     null
@@ -37,6 +37,29 @@ export default function SparkPage() {
 
   // ── Registered agents list ──────────────────────────────────────
   const [agents, setAgents] = useState<ApiResult[]>([]);
+
+  // ── Knowledge Ledger state ────────────────────────────────────
+  interface TopicEntry {
+    topicId: string;
+    messages: Record<string, unknown>[];
+  }
+  type LedgerData = Record<string, TopicEntry>;
+  const [ledger, setLedger] = useState<LedgerData | null>(null);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+
+  async function handleFetchLedger() {
+    setLedgerLoading(true);
+    try {
+      const res = await fetch("/api/spark/ledger");
+      const data = await res.json();
+      if (data.success) {
+        setLedger(data.ledger);
+      }
+    } catch (err) {
+      console.error("Ledger fetch error:", err);
+    }
+    setLedgerLoading(false);
+  }
 
   async function handleRegister() {
     setRegisterLoading(true);
@@ -55,12 +78,37 @@ export default function SparkPage() {
         }),
       });
       const result = await res.json();
-      setRegisterResult(result);
 
       if (result.success) {
-        setAgents((prev) => [...prev, result]);
+        // Enrich with _loaded fields so AgentCard shows all sections
+        const enriched: ApiResult = {
+          ...result,
+          _loaded: true,
+          _agentProfile: {
+            botId: result.botId,
+            domainTags,
+            serviceOfferings,
+            reputationScore: 0,
+            contributionCount: 0,
+          },
+          _isAuthorized: true,
+          _upvotes: 0,
+          _downvotes: 0,
+          _netReputation: 0,
+          _botMessages: [],
+          _botMessageCount: 1,
+          _tokens: [{ tokenId: "0.0.7984944", balance: 100_000_000 }],
+          _intelligentData: result.zgRootHash
+            ? [{ dataDescription: `0g://storage/${result.zgRootHash}` }]
+            : [],
+          _registeredAt: new Date().toISOString(),
+        };
+        setRegisterResult(enriched);
+        setAgents((prev) => [...prev, enriched]);
         // Auto-fill knowledge form with this agent's private key
         setKPrivateKey(result.hederaPrivateKey);
+      } else {
+        setRegisterResult(result);
       }
     } catch (err) {
       setRegisterResult({ success: false, error: String(err) });
@@ -84,7 +132,7 @@ export default function SparkPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           content: kContent,
-          domainTags: kDomainTags,
+          category: kCategory,
           hederaPrivateKey: kPrivateKey,
         }),
       });
@@ -265,10 +313,13 @@ export default function SparkPage() {
           <ResultBlock data={registerResult} />
         )}
         {registerResult?.success && (
-          <OnChainResult
-            data={registerResult}
-            type="register"
+          <AgentCard
+            index={agents.length - 1}
+            agent={registerResult}
             onCopy={copyToClipboard}
+            onUseForKnowledge={() => {
+              setKPrivateKey(registerResult.hederaPrivateKey as string);
+            }}
           />
         )}
       </section>
@@ -395,11 +446,27 @@ export default function SparkPage() {
               }}
             />
           </div>
-          <Field
-            label="Domain Tags"
-            value={kDomainTags}
-            onChange={setKDomainTags}
-          />
+          <div>
+            <label style={{ fontSize: 12, color: "#666" }}>Category</label>
+            <select
+              value={kCategory}
+              onChange={(e) => setKCategory(e.target.value)}
+              style={{
+                width: "100%",
+                fontFamily: "monospace",
+                fontSize: 13,
+                padding: 8,
+                border: "1px solid #ccc",
+                boxSizing: "border-box",
+              }}
+            >
+              <option value="scam">Scam</option>
+              <option value="blockchain">Blockchain</option>
+              <option value="legal">Legal</option>
+              <option value="trend">Trend</option>
+              <option value="skills">Skills</option>
+            </select>
+          </div>
         </div>
 
         <button
@@ -436,7 +503,48 @@ export default function SparkPage() {
 
       <hr style={{ margin: "24px 0" }} />
 
-      {/* Verify section removed — now integrated into AgentCard above */}
+      {/* ═══════════════════════════════════════════════════════════ */}
+      {/*  KNOWLEDGE LEDGER                                          */}
+      {/* ═══════════════════════════════════════════════════════════ */}
+      <section style={{ margin: "24px 0" }}>
+        <h2>Knowledge Ledger</h2>
+        <p style={{ color: "#666", fontSize: 13 }}>
+          All messages from the master topic and 5 knowledge sub-topics, fetched
+          from the Hedera Mirror Node.
+        </p>
+
+        <button
+          onClick={handleFetchLedger}
+          disabled={ledgerLoading}
+          style={{
+            marginTop: 8,
+            padding: "10px 24px",
+            fontSize: 14,
+            fontFamily: "monospace",
+            fontWeight: "bold",
+            cursor: ledgerLoading ? "wait" : "pointer",
+            background: ledgerLoading ? "#ccc" : "#0891b2",
+            color: "#fff",
+            border: "none",
+          }}
+        >
+          {ledgerLoading ? "Fetching..." : ledger ? "Refresh Ledger" : "Fetch Ledger"}
+        </button>
+
+        {ledger && (
+          <div style={{ marginTop: 16 }}>
+            {Object.entries(ledger).map(([key, entry]) => (
+              <TopicSection
+                key={key}
+                name={key}
+                topicId={entry.topicId}
+                messages={entry.messages}
+                onCopy={copyToClipboard}
+              />
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
@@ -513,6 +621,8 @@ function OnChainResult({
   const masterTopicId = data.masterTopicId as string;
   const botTopicId = data.botTopicId as string;
   const zgHash = data.zgRootHash as string;
+  const category = data.category as string;
+  const categoryTopicId = data.categoryTopicId as string;
 
   return (
     <div
@@ -534,12 +644,22 @@ function OnChainResult({
       {/* On-chain links */}
       <SectionLabel text="On-Chain Receipts" />
       <div style={{ display: "grid", gap: 6, marginBottom: 12 }}>
-        <LinkRow
-          label="Master Topic"
-          value={`${masterTopicId} (seq #${data.masterSeqNo as string})`}
-          url={`https://hashscan.io/testnet/topic/${masterTopicId}`}
-          onCopy={onCopy}
-        />
+        {type === "register" && (
+          <LinkRow
+            label="Master Topic"
+            value={`${masterTopicId} (seq #${data.masterSeqNo as string})`}
+            url={`https://hashscan.io/testnet/topic/${masterTopicId}`}
+            onCopy={onCopy}
+          />
+        )}
+        {type === "knowledge" && categoryTopicId && (
+          <LinkRow
+            label={`${category?.charAt(0).toUpperCase()}${category?.slice(1)} Topic`}
+            value={`${categoryTopicId} (seq #${data.categorySeqNo as string})`}
+            url={`https://hashscan.io/testnet/topic/${categoryTopicId}`}
+            onCopy={onCopy}
+          />
+        )}
         <LinkRow
           label="Bot Topic"
           value={`${botTopicId} (seq #${data.botSeqNo as string})`}
@@ -556,6 +676,14 @@ function OnChainResult({
           value={zgHash}
           onCopy={onCopy}
         />
+        {data.zgUploadTxHash && (
+          <LinkRow
+            label="Upload Tx"
+            value={data.zgUploadTxHash as string}
+            url={`${ZG_EXPLORER}/tx/${data.zgUploadTxHash as string}`}
+            onCopy={onCopy}
+          />
+        )}
         {data.configHash && (
           <LinkRow
             label="Config Hash"
@@ -653,6 +781,9 @@ function AgentCard({
   const tokenId = agent.iNftTokenId as number;
   const zgHash = agent.zgRootHash as string;
   const configHash = (agent.configHash as string) || "";
+  const zgUploadTxHash = (agent.zgUploadTxHash as string) || "";
+  const mintTxHash = (agent.mintTxHash as string) || "";
+  const authTxHash = (agent.authTxHash as string) || "";
   const airdrop = agent.airdrop as { hbar: number; usdc: number };
   const isLoaded = agent._loaded as boolean;
   const agentProfile = agent._agentProfile as Record<string, unknown> | null;
@@ -827,6 +958,22 @@ function AgentCard({
           onCopy={onCopy}
           detail={`tokenId=${tokenId}, authorized=${evmAddr}`}
         />
+        {mintTxHash && (
+          <LinkRow
+            label="Mint Tx"
+            value={mintTxHash}
+            url={`${ZG_EXPLORER}/tx/${mintTxHash}`}
+            onCopy={onCopy}
+          />
+        )}
+        {authTxHash && (
+          <LinkRow
+            label="Authorize Tx"
+            value={authTxHash}
+            url={`${ZG_EXPLORER}/tx/${authTxHash}`}
+            onCopy={onCopy}
+          />
+        )}
         {configHash && (
           <LinkRow
             label="Config Hash"
@@ -845,6 +992,14 @@ function AgentCard({
           onCopy={onCopy}
           detail="agent config, encrypted API key, system prompt"
         />
+        {zgUploadTxHash && (
+          <LinkRow
+            label="Upload Tx"
+            value={zgUploadTxHash}
+            url={`${ZG_EXPLORER}/tx/${zgUploadTxHash}`}
+            onCopy={onCopy}
+          />
+        )}
       </div>
 
       {/* ── Credentials (expandable) ────────────────────── */}
@@ -1121,5 +1276,193 @@ function ResultBlock({ data }: { data: ApiResult }) {
     >
       {JSON.stringify(data, null, 2)}
     </pre>
+  );
+}
+
+const CATEGORY_COLORS: Record<string, string> = {
+  master: "#6366f1",
+  scam: "#dc2626",
+  blockchain: "#2563eb",
+  legal: "#7c3aed",
+  trend: "#ca8a04",
+  skills: "#16a34a",
+};
+
+function TopicSection({
+  name,
+  topicId,
+  messages,
+  onCopy,
+}: {
+  name: string;
+  topicId: string;
+  messages: Record<string, unknown>[];
+  onCopy: (v: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const color = CATEGORY_COLORS[name] || "#475569";
+  const label = name.charAt(0).toUpperCase() + name.slice(1);
+
+  return (
+    <div
+      style={{
+        marginBottom: 16,
+        border: `1px solid ${color}33`,
+        borderRadius: 8,
+        overflow: "hidden",
+      }}
+    >
+      <div
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          padding: "8px 12px",
+          background: `${color}11`,
+          borderBottom: expanded ? `1px solid ${color}33` : "none",
+          cursor: "pointer",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span
+            style={{
+              background: color,
+              color: "#fff",
+              padding: "2px 8px",
+              borderRadius: 4,
+              fontSize: 11,
+              fontWeight: "bold",
+            }}
+          >
+            {label}
+          </span>
+          <a
+            href={`https://hashscan.io/testnet/topic/${topicId}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color, fontSize: 12, textDecoration: "underline" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {topicId}
+          </a>
+          <span style={{ fontSize: 12, color: "#94a3b8" }}>
+            ({messages.length} message{messages.length !== 1 ? "s" : ""})
+          </span>
+        </div>
+        <span style={{ fontSize: 12, color: "#94a3b8" }}>
+          {expanded ? "▼" : "▶"}
+        </span>
+      </div>
+
+      {expanded && messages.length > 0 && (
+        <div style={{ padding: 8 }}>
+          {messages.map((msg, i) => (
+            <div
+              key={i}
+              style={{
+                padding: 8,
+                marginBottom: 4,
+                background: "#f8fafc",
+                borderRadius: 4,
+                fontSize: 12,
+                fontFamily: "monospace",
+              }}
+            >
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <span
+                  style={{
+                    background: "#e2e8f0",
+                    padding: "1px 6px",
+                    borderRadius: 3,
+                    fontSize: 11,
+                    fontWeight: "bold",
+                  }}
+                >
+                  #{msg._seqNo as number}
+                </span>
+                <span style={{ fontWeight: "bold", color }}>
+                  {msg.action as string}
+                </span>
+                {msg.author && (
+                  <span style={{ color: "#64748b" }}>
+                    by {msg.author as string}
+                  </span>
+                )}
+                {msg.botId && (
+                  <span style={{ color: "#64748b" }}>
+                    bot: {msg.botId as string}
+                  </span>
+                )}
+                {msg.category && (
+                  <span
+                    style={{
+                      background: `${CATEGORY_COLORS[msg.category as string] || "#475569"}22`,
+                      color: CATEGORY_COLORS[msg.category as string] || "#475569",
+                      padding: "1px 6px",
+                      borderRadius: 3,
+                      fontSize: 10,
+                    }}
+                  >
+                    {msg.category as string}
+                  </span>
+                )}
+                {msg.timestamp && (
+                  <span style={{ color: "#94a3b8", fontSize: 11 }}>
+                    {(msg.timestamp as string).slice(0, 19)}
+                  </span>
+                )}
+              </div>
+              {msg.zgRootHash && (
+                <div style={{ marginTop: 4, color: "#64748b" }}>
+                  0G: <span
+                    onClick={() => onCopy(msg.zgRootHash as string)}
+                    style={{ cursor: "pointer", textDecoration: "underline" }}
+                    title="Click to copy"
+                  >
+                    {(msg.zgRootHash as string).slice(0, 18)}...
+                  </span>
+                  {msg.iNftTokenId !== undefined && (
+                    <span> | iNFT #{msg.iNftTokenId as number}</span>
+                  )}
+                  {msg.itemId && (
+                    <span> | {msg.itemId as string}</span>
+                  )}
+                </div>
+              )}
+              {msg.content && (
+                <div
+                  style={{
+                    marginTop: 6,
+                    padding: "6px 8px",
+                    background: "#fff",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 4,
+                    color: "#334155",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {msg.content as string}
+                </div>
+              )}
+              {msg.subTopics && (
+                <div style={{ marginTop: 4, color: "#64748b" }}>
+                  Sub-topics: {Object.entries(msg.subTopics as Record<string, string>).map(
+                    ([cat, tid]) => `${cat}=${tid}`
+                  ).join(", ")}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {expanded && messages.length === 0 && (
+        <div style={{ padding: 12, color: "#94a3b8", fontSize: 12, fontStyle: "italic" }}>
+          No messages yet
+        </div>
+      )}
+    </div>
   );
 }

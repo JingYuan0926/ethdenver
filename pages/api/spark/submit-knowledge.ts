@@ -19,21 +19,31 @@ const ZG_INDEXER = "https://indexer-storage-testnet-turbo.0g.ai";
 // ── Mirror Node ──────────────────────────────────────────────────
 const MIRROR_URL = "https://testnet.mirrornode.hedera.com";
 
-// ── Master topic persistence (same as register-agent) ────────────
-const CONFIG_PATH = join(process.cwd(), "spark-config.json");
+// ── Knowledge categories ─────────────────────────────────────────
+const KNOWLEDGE_CATEGORIES = ["scam", "blockchain", "legal", "trend", "skills"] as const;
+type KnowledgeCategory = (typeof KNOWLEDGE_CATEGORIES)[number];
 
-function getMasterTopicId(): string {
-  const envTopic = process.env.SPARK_MASTER_TOPIC_ID;
-  if (envTopic) return envTopic;
+// ── Topic config persistence (same as register-agent) ────────────
+const CONFIG_PATH = join(process.cwd(), "data", "spark-config.json");
 
+interface SparkConfig {
+  masterTopicId?: string;
+  subTopics?: Record<KnowledgeCategory, string>;
+}
+
+function readConfig(): SparkConfig {
   if (existsSync(CONFIG_PATH)) {
-    const config = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
-    if (config.masterTopicId) return config.masterTopicId;
+    return JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
   }
+  return {};
+}
 
-  throw new Error(
-    "No master topic found. Register an agent first to auto-create it."
-  );
+function getTopicIds(): { masterTopicId: string; subTopics: Record<KnowledgeCategory, string> } {
+  const config = readConfig();
+  if (!config.masterTopicId || !config.subTopics) {
+    throw new Error("No topics found. Register an agent first to auto-create them.");
+  }
+  return { masterTopicId: config.masterTopicId, subTopics: config.subTopics };
 }
 
 // ── Helper: submit HCS message with signing ──────────────────────
@@ -60,7 +70,7 @@ async function resolveAgent(botKey: PrivateKey): Promise<{
   botTopicId: string;
 }> {
   const publicKeyDer = botKey.publicKey.toString();
-  const masterTopicId = getMasterTopicId();
+  const { masterTopicId } = getTopicIds();
 
   // Look up account by public key via Mirror Node
   const mirrorRes = await fetch(
@@ -115,7 +125,7 @@ export default async function handler(
 
   const {
     content,
-    domainTags = "",
+    category = "",
     hederaPrivateKey,
   } = req.body;
 
@@ -123,6 +133,13 @@ export default async function handler(
     return res.status(400).json({
       success: false,
       error: "Required: content, hederaPrivateKey",
+    });
+  }
+
+  if (!category || !KNOWLEDGE_CATEGORIES.includes(category)) {
+    return res.status(400).json({
+      success: false,
+      error: `Required: category (one of: ${KNOWLEDGE_CATEGORIES.join(", ")})`,
     });
   }
 
@@ -136,7 +153,8 @@ export default async function handler(
   try {
     const client = getHederaClient();
     const operatorKey = getOperatorKey();
-    const masterTopicId = getMasterTopicId();
+    const { masterTopicId, subTopics } = getTopicIds();
+    const categoryTopicId = subTopics[category as KnowledgeCategory];
 
     // ────────────────────────────────────────────────────────────
     // Step 0: Resolve agent identity from private key
@@ -152,7 +170,7 @@ export default async function handler(
     const knowledgeItem = JSON.stringify({
       type: "knowledge-item",
       itemId,
-      domain: domainTags,
+      category,
       content,
       author: accountId,
       version: 1,
@@ -171,28 +189,34 @@ export default async function handler(
     if (treeErr || !tree) throw new Error(`Merkle tree: ${treeErr}`);
     const zgRootHash = tree.rootHash();
 
-    const [, uploadErr] = await indexer.upload(zgFile, ZG_RPC, zgSigner);
+    const [zgUploadResult, uploadErr] = await indexer.upload(zgFile, ZG_RPC, zgSigner);
     if (uploadErr) throw new Error(`0G upload: ${uploadErr}`);
+    const zgUploadTxHash = zgUploadResult
+      ? "txHash" in zgUploadResult
+        ? zgUploadResult.txHash
+        : zgUploadResult.txHashes?.[0] ?? ""
+      : "";
 
     await zgFile.close();
     unlinkSync(tmpPath);
 
     // ────────────────────────────────────────────────────────────
-    // Step 2: Log to master topic (operator signs)
+    // Step 2: Log to category sub-topic (operator signs)
     // ────────────────────────────────────────────────────────────
-    const masterMsg = JSON.stringify({
+    const categoryMsg = JSON.stringify({
       action: "knowledge_submitted",
       itemId,
       author: accountId,
       zgRootHash,
-      domain: domainTags,
+      category,
+      content,
       timestamp: new Date().toISOString(),
     });
 
-    const masterSeqNo = await submitToTopic(
+    const categorySeqNo = await submitToTopic(
       client,
-      masterTopicId,
-      masterMsg,
+      categoryTopicId,
+      categoryMsg,
       operatorKey
     );
 
@@ -203,7 +227,7 @@ export default async function handler(
       action: "i_submitted_knowledge",
       itemId,
       zgRootHash,
-      domain: domainTags,
+      category,
       timestamp: new Date().toISOString(),
     });
 
@@ -222,8 +246,11 @@ export default async function handler(
       itemId,
       author: accountId,
       zgRootHash,
+      zgUploadTxHash: zgUploadTxHash ?? "",
+      category,
+      categoryTopicId,
       masterTopicId,
-      masterSeqNo,
+      categorySeqNo,
       botTopicId,
       botSeqNo,
     });

@@ -18,7 +18,7 @@ const MIRROR_URL = "https://testnet.mirrornode.hedera.com";
 const ZG_RPC = "https://evmrpc-testnet.0g.ai";
 
 // ── Master topic persistence ─────────────────────────────────────
-const CONFIG_PATH = join(process.cwd(), "spark-config.json");
+const CONFIG_PATH = join(process.cwd(), "data", "spark-config.json");
 
 function getMasterTopicId(): string | null {
   const envTopic = process.env.SPARK_MASTER_TOPIC_ID;

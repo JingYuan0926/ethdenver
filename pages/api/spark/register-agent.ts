@@ -12,7 +12,7 @@ import {
 } from "@hashgraph/sdk";
 import { ethers } from "ethers";
 import { ZgFile, Indexer } from "@0gfoundation/0g-ts-sdk";
-import { writeFileSync, readFileSync, existsSync, unlinkSync } from "fs";
+import { writeFileSync, readFileSync, existsSync, unlinkSync, mkdirSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { keccak256, toUtf8Bytes } from "ethers";
@@ -30,43 +30,86 @@ const USDC_TOKEN_ID = "0.0.7984944";
 const USDC_AIRDROP_AMOUNT = 100_000_000; // 100 USDC (6 decimals)
 
 // ── Master topic persistence ─────────────────────────────────────
-const CONFIG_PATH = join(process.cwd(), "spark-config.json");
+const DATA_DIR = join(process.cwd(), "data");
+const CONFIG_PATH = join(DATA_DIR, "spark-config.json");
 
-function readConfig(): Record<string, string> {
+// ── Knowledge categories ─────────────────────────────────────────
+const KNOWLEDGE_CATEGORIES = ["scam", "blockchain", "legal", "trend", "skills"] as const;
+type KnowledgeCategory = (typeof KNOWLEDGE_CATEGORIES)[number];
+
+interface SparkConfig {
+  masterTopicId?: string;
+  subTopics?: Record<KnowledgeCategory, string>;
+}
+
+function readConfig(): SparkConfig {
   if (existsSync(CONFIG_PATH)) {
     return JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
   }
   return {};
 }
 
-function writeConfig(data: Record<string, string>) {
-  const existing = readConfig();
-  writeFileSync(CONFIG_PATH, JSON.stringify({ ...existing, ...data }, null, 2));
+function writeFullConfig(data: SparkConfig) {
+  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+  writeFileSync(CONFIG_PATH, JSON.stringify(data, null, 2));
 }
 
-async function ensureMasterTopic(): Promise<string> {
-  // 1. Check env var
-  const envTopic = process.env.SPARK_MASTER_TOPIC_ID;
-  if (envTopic) return envTopic;
+interface TopicIds {
+  masterTopicId: string;
+  subTopics: Record<KnowledgeCategory, string>;
+}
 
-  // 2. Check persisted config
+async function ensureTopics(): Promise<TopicIds> {
+  // 1. Check persisted config (has both master + subTopics)
   const config = readConfig();
-  if (config.masterTopicId) return config.masterTopicId;
+  if (config.masterTopicId && config.subTopics) {
+    return {
+      masterTopicId: config.masterTopicId,
+      subTopics: config.subTopics,
+    };
+  }
 
-  // 3. Create new master topic with operator submit key
+  // 2. Create all topics from scratch
   const client = getHederaClient();
   const operatorKey = getOperatorKey();
 
-  const tx = await new TopicCreateTransaction()
+  // Create master topic
+  const masterTx = await new TopicCreateTransaction()
     .setTopicMemo("SPARK Master Ledger")
     .setSubmitKey(operatorKey.publicKey)
     .execute(client);
+  const masterReceipt = await masterTx.getReceipt(client);
+  const masterTopicId = masterReceipt.topicId!.toString();
 
-  const receipt = await tx.getReceipt(client);
-  const topicId = receipt.topicId!.toString();
+  // Create 5 knowledge sub-topics
+  const subTopics = {} as Record<KnowledgeCategory, string>;
+  for (const category of KNOWLEDGE_CATEGORIES) {
+    const subTx = await new TopicCreateTransaction()
+      .setTopicMemo(`SPARK Knowledge: ${category}`)
+      .setSubmitKey(operatorKey.publicKey)
+      .execute(client);
+    const subReceipt = await subTx.getReceipt(client);
+    subTopics[category] = subReceipt.topicId!.toString();
+  }
 
-  writeConfig({ masterTopicId: topicId });
-  return topicId;
+  // Publish topics_initialized to master (on-chain discovery)
+  const initMsg = JSON.stringify({
+    action: "topics_initialized",
+    subTopics,
+    timestamp: new Date().toISOString(),
+  });
+  await new TopicMessageSubmitTransaction()
+    .setTopicId(masterTopicId)
+    .setMessage(initMsg)
+    .freezeWith(client)
+    .sign(operatorKey)
+    .then((signed) => signed.execute(client))
+    .then((resp) => resp.getReceipt(client));
+
+  // Persist locally
+  writeFullConfig({ masterTopicId, subTopics });
+
+  return { masterTopicId, subTopics };
 }
 
 // ── Helper: submit HCS message with signing ──────────────────────
@@ -125,9 +168,9 @@ export default async function handler(
     const operatorId = getOperatorId();
 
     // ────────────────────────────────────────────────────────────
-    // Step 1: Ensure master topic
+    // Step 1: Ensure master + knowledge sub-topics exist
     // ────────────────────────────────────────────────────────────
-    const masterTopicId = await ensureMasterTopic();
+    const { masterTopicId, subTopics } = await ensureTopics();
 
     // ────────────────────────────────────────────────────────────
     // Step 2: Create Hedera account (10 HBAR, unlimited auto-assoc)
@@ -253,8 +296,13 @@ export default async function handler(
     if (treeErr || !tree) throw new Error(`Merkle tree: ${treeErr}`);
     const zgRootHash = tree.rootHash();
 
-    const [, uploadErr] = await indexer.upload(zgFile, ZG_RPC, zgSigner);
+    const [zgUploadResult, uploadErr] = await indexer.upload(zgFile, ZG_RPC, zgSigner);
     if (uploadErr) throw new Error(`0G upload: ${uploadErr}`);
+    const zgUploadTxHash = zgUploadResult
+      ? "txHash" in zgUploadResult
+        ? zgUploadResult.txHash
+        : zgUploadResult.txHashes?.[0] ?? ""
+      : "";
 
     await zgFile.close();
     unlinkSync(tmpPath);
@@ -278,6 +326,7 @@ export default async function handler(
       serviceOfferings,
       iDatas
     );
+    const mintTxHash = mintTx.hash;
     const mintReceipt = await mintTx.wait();
 
     // Parse token ID from AgentMinted event
@@ -319,11 +368,13 @@ export default async function handler(
     //          Operator owns the iNFT, bot is authorized to use it.
     //          Anyone can verify: isAuthorized(tokenId, evmAddress)
     // ────────────────────────────────────────────────────────────
+    let authTxHash = "";
     if (iNftTokenId > 0) {
       const authTx = await inftContract.authorizeUsage(
         iNftTokenId,
         evmAddress
       );
+      authTxHash = authTx.hash;
       await authTx.wait();
     }
 
@@ -381,9 +432,13 @@ export default async function handler(
       botTopicId,
       voteTopicId,
       zgRootHash,
+      zgUploadTxHash: zgUploadTxHash ?? "",
       configHash,
       iNftTokenId,
+      mintTxHash,
+      authTxHash,
       masterTopicId,
+      subTopics,
       masterSeqNo,
       botSeqNo,
       airdrop: { hbar: 10, usdc: 100 },

@@ -1,7 +1,5 @@
 import { Client, AccountId, PrivateKey } from "@hashgraph/sdk";
 
-let client: Client | null = null;
-
 export function getOperatorKey(): PrivateKey {
   const operatorKey = process.env.HEDERA_OPERATOR_KEY;
   if (!operatorKey) throw new Error("Missing HEDERA_OPERATOR_KEY in .env.local");
@@ -15,8 +13,6 @@ export function getOperatorId(): string {
 }
 
 export function getHederaClient(): Client {
-  if (client) return client;
-
   const operatorId = process.env.HEDERA_OPERATOR_ID;
   const operatorKey = process.env.HEDERA_OPERATOR_KEY;
 
@@ -26,7 +22,7 @@ export function getHederaClient(): Client {
     );
   }
 
-  client = Client.forTestnet();
+  const client = Client.forTestnet();
   client.setOperator(
     AccountId.fromString(operatorId),
     PrivateKey.fromStringDer(operatorKey)
