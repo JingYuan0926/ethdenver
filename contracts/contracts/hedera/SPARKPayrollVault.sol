@@ -7,14 +7,39 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {HederaScheduleService} from "./HederaScheduleService.sol";
 import {HederaResponseCodes} from "./interfaces/HederaResponseCodes.sol";
 
-/// @title SPARKPayrollVault — Automated HSS-powered payroll for AI agent rewards
+/// @title SPARKPayrollVault — Automated HSS-powered payroll + subscription for AI agents
 /// @notice Uses Hedera Schedule Service (scheduleCall at 0x16b) to create self-rescheduling
 ///         payment loops. Supports HBAR and HTS/ERC-20 token payments. No off-chain servers required.
+///         Payroll = outbound (vault → agent). Subscription = inbound (subscriber → vault).
 contract SPARKPayrollVault is Ownable, ReentrancyGuard, HederaScheduleService {
+    // ── Custom Errors (saves ~1KB bytecode vs string requires) ──
+    error ZeroAmount();
+    error IntervalTooShort();
+    error Idx();
+    error NotActive();
+    error NotAuth();
+    error AlreadySched();
+    error XferFail();
+    error InsufBal();
+    error MaxReached();
+    error ZeroAddr();
+    error AlreadyExists();
+    error NoRetry();
+    error NoPending();
+    error NoToken();
+    error InsufDeposit();
+    error ApproveFirst();
+    error UseHbar();
+    error AlreadyCancelled();
+    error NotHbar();
+    error GasLow();
+    error InternalOnly();
+    error AssocFail();
     // ── Constants ────────────────────────────────────────────
-    uint256 public scheduledCallGasLimit = 10_000_000; // 10M gas — HSS precompile is expensive
+    uint256 public scheduledCallGasLimit = 2_000_000; // 2M gas — HSS precompile charges ~98% of gasLimit param; 1.5M too low. Cost ~1.74 HBAR/call at 870 gWei
     uint256 public constant MIN_INTERVAL = 10; // 10 seconds minimum (demo)
     uint256 public constant MAX_AGENTS = 50;
+    uint256 public constant MAX_SUBSCRIPTIONS = 100;
 
     // ── HTS Token Service precompile ─────────────────────────
     address internal constant HTS_PRECOMPILE = address(0x167);
@@ -118,8 +143,8 @@ contract SPARKPayrollVault is Ownable, ReentrancyGuard, HederaScheduleService {
         uint256 _defaultAmount,
         uint256 _defaultInterval
     ) Ownable(msg.sender) {
-        require(_defaultAmount > 0, "Zero default amount");
-        require(_defaultInterval >= MIN_INTERVAL, "Interval too short");
+        if (_defaultAmount == 0) revert ZeroAmount();
+        if (_defaultInterval < MIN_INTERVAL) revert IntervalTooShort();
         defaultAmount = _defaultAmount;
         defaultInterval = _defaultInterval;
     }
@@ -130,30 +155,30 @@ contract SPARKPayrollVault is Ownable, ReentrancyGuard, HederaScheduleService {
     }
 
     function fundVault() external payable {
-        require(msg.value > 0, "Must send HBAR");
+        if (msg.value == 0) revert ZeroAmount();
         emit VaultFunded(msg.sender, msg.value, address(this).balance);
     }
 
     /// @notice Fund vault with ERC-20/HTS tokens (caller must approve first)
     function fundVaultToken(uint256 amount) external {
-        require(paymentToken != address(0), "No payment token set");
-        require(amount > 0, "Zero amount");
+        if (paymentToken == address(0)) revert NoToken();
+        if (amount == 0) revert ZeroAmount();
         bool ok = IERC20(paymentToken).transferFrom(msg.sender, address(this), amount);
-        require(ok, "Token transfer failed");
+        if (!ok) revert XferFail();
         uint256 bal = IERC20(paymentToken).balanceOf(address(this));
         emit VaultFundedToken(msg.sender, paymentToken, amount, bal);
     }
 
     function withdrawExcess(uint256 amount) external onlyOwner {
         if (paymentToken == address(0)) {
-            require(amount <= address(this).balance, "Insufficient balance");
+            if (amount > address(this).balance) revert InsufBal();
             (bool sent, ) = payable(owner()).call{value: amount}("");
-            require(sent, "Withdraw failed");
+            if (!sent) revert XferFail();
         } else {
             uint256 bal = IERC20(paymentToken).balanceOf(address(this));
-            require(amount <= bal, "Insufficient token balance");
+            if (amount > bal) revert InsufBal();
             bool ok = IERC20(paymentToken).transfer(owner(), amount);
-            require(ok, "Token withdraw failed");
+            if (!ok) revert XferFail();
         }
         emit VaultWithdrawn(owner(), amount);
     }
@@ -174,30 +199,27 @@ contract SPARKPayrollVault is Ownable, ReentrancyGuard, HederaScheduleService {
                 token
             )
         );
-        require(success, "HTS associate call failed");
+        if (!success) revert AssocFail();
         int64 rc = abi.decode(result, (int64));
-        require(
-            rc == HederaResponseCodes.SUCCESS || rc == int64(282),
-            "HTS associate failed"
-        ); // 282 = TOKEN_ALREADY_ASSOCIATED_TO_ACCOUNT
+        if (rc != HederaResponseCodes.SUCCESS && rc != int64(282)) revert AssocFail();
         emit TokenAssociated(token);
     }
 
     // ── Default Setters ─────────────────────────────────────
     function setDefaultAmount(uint256 _amount) external onlyOwner {
-        require(_amount > 0, "Zero amount");
+        if (_amount == 0) revert ZeroAmount();
         defaultAmount = _amount;
         emit DefaultsUpdated(_amount, defaultInterval);
     }
 
     function setDefaultInterval(uint256 _interval) external onlyOwner {
-        require(_interval >= MIN_INTERVAL, "Interval too short");
+        if (_interval < MIN_INTERVAL) revert IntervalTooShort();
         defaultInterval = _interval;
         emit DefaultsUpdated(defaultAmount, _interval);
     }
 
     function setGasLimit(uint256 _gasLimit) external onlyOwner {
-        require(_gasLimit >= 1_000_000, "Gas too low");
+        if (_gasLimit < 400_000) revert GasLow();
         scheduledCallGasLimit = _gasLimit;
     }
 
@@ -208,16 +230,16 @@ contract SPARKPayrollVault is Ownable, ReentrancyGuard, HederaScheduleService {
         uint256 amountPerPeriod,
         uint256 intervalSeconds
     ) external onlyOwner returns (uint256 idx) {
-        require(agent != address(0), "Zero address");
-        require(!isAgent[agent], "Agent already exists");
-        require(agents.length < MAX_AGENTS, "Max agents reached");
+        if (agent == address(0)) revert ZeroAddr();
+        if (isAgent[agent]) revert AlreadyExists();
+        if (agents.length >= MAX_AGENTS) revert MaxReached();
 
         // Use defaults if 0
         uint256 amount = amountPerPeriod > 0 ? amountPerPeriod : defaultAmount;
         uint256 interval = intervalSeconds > 0
             ? intervalSeconds
             : defaultInterval;
-        require(interval >= MIN_INTERVAL, "Interval too short");
+        if (interval < MIN_INTERVAL) revert IntervalTooShort();
 
         idx = agents.length;
         agents.push(
@@ -241,9 +263,9 @@ contract SPARKPayrollVault is Ownable, ReentrancyGuard, HederaScheduleService {
     }
 
     function removeAgent(uint256 idx) external onlyOwner {
-        require(idx < agents.length, "Invalid index");
+        if (idx >= agents.length) revert Idx();
         AgentPayroll storage ap = agents[idx];
-        require(ap.active, "Already removed");
+        if (!ap.active) revert NotActive();
 
         ap.active = false;
         isAgent[ap.agent] = false;
@@ -256,13 +278,13 @@ contract SPARKPayrollVault is Ownable, ReentrancyGuard, HederaScheduleService {
         uint256 newAmount,
         uint256 newInterval
     ) external onlyOwner {
-        require(idx < agents.length, "Invalid index");
+        if (idx >= agents.length) revert Idx();
         AgentPayroll storage ap = agents[idx];
-        require(ap.active, "Agent not active");
+        if (!ap.active) revert NotActive();
 
         if (newAmount > 0) ap.amountPerPeriod = newAmount;
         if (newInterval > 0) {
-            require(newInterval >= MIN_INTERVAL, "Interval too short");
+            if (newInterval < MIN_INTERVAL) revert IntervalTooShort();
             ap.intervalSeconds = newInterval;
         }
 
@@ -272,10 +294,10 @@ contract SPARKPayrollVault is Ownable, ReentrancyGuard, HederaScheduleService {
     // ── Schedule Initiation ─────────────────────────────────
     /// @notice Start the payroll schedule for an agent (creates first HSS schedule)
     function startPayroll(uint256 agentIdx) external onlyOwner {
-        require(agentIdx < agents.length, "Invalid index");
+        if (agentIdx >= agents.length) revert Idx();
         AgentPayroll storage ap = agents[agentIdx];
-        require(ap.active, "Agent not active");
-        require(ap.status != ScheduleStatus.Pending, "Already scheduled");
+        if (!ap.active) revert NotActive();
+        if (ap.status == ScheduleStatus.Pending) revert AlreadySched();
 
         uint256 nextTime = block.timestamp + ap.intervalSeconds;
         ap.nextPaymentTime = nextTime;
@@ -286,6 +308,14 @@ contract SPARKPayrollVault is Ownable, ReentrancyGuard, HederaScheduleService {
     /// @notice Internal: create a scheduled call via HSS
     function _createSchedule(uint256 agentIdx, uint256 time) internal {
         AgentPayroll storage ap = agents[agentIdx];
+
+        // Check contract has enough HBAR to cover gas for next scheduled call
+        uint256 gasReserve = scheduledCallGasLimit * 87;
+        if (address(this).balance < gasReserve) {
+            ap.status = ScheduleStatus.Failed;
+            emit PayrollFailed(agentIdx, "GAS");
+            return;
+        }
 
         // Check capacity, try time+1 if needed
         bool hasCapacity = _hasScheduleCapacity(time, scheduledCallGasLimit);
@@ -316,7 +346,7 @@ contract SPARKPayrollVault is Ownable, ReentrancyGuard, HederaScheduleService {
 
         if (rc != HederaResponseCodes.SUCCESS) {
             ap.status = ScheduleStatus.Failed;
-            emit PayrollFailed(agentIdx, "scheduleCall returned non-success");
+            emit PayrollFailed(agentIdx, "SCF");
             return;
         }
 
@@ -344,20 +374,15 @@ contract SPARKPayrollVault is Ownable, ReentrancyGuard, HederaScheduleService {
     // ── Payroll Execution (called by HSS) ───────────────────
     /// @notice Called by HSS at the scheduled time. Pays agent and reschedules.
     function executePayroll(uint256 agentIdx) external nonReentrant {
-        // When HSS executes this via scheduleCall targeting address(this),
-        // msg.sender is address(this). Also allow owner for manual trigger.
-        require(
-            msg.sender == address(this) || msg.sender == owner(),
-            "Not authorized"
-        );
-        require(agentIdx < agents.length, "Invalid index");
+        if (msg.sender != address(this) && msg.sender != owner()) revert NotAuth();
+        if (agentIdx >= agents.length) revert Idx();
 
         AgentPayroll storage ap = agents[agentIdx];
 
         // Skip if agent was deactivated
         if (!ap.active) {
             ap.status = ScheduleStatus.Failed;
-            emit PayrollFailed(agentIdx, "Agent deactivated");
+            emit PayrollFailed(agentIdx, "OFF");
             return;
         }
 
@@ -371,7 +396,7 @@ contract SPARKPayrollVault is Ownable, ReentrancyGuard, HederaScheduleService {
             if (available < ap.amountPerPeriod) {
                 ap.status = ScheduleStatus.Failed;
                 emit InsufficientBalance(agentIdx, ap.amountPerPeriod, available);
-                emit PayrollFailed(agentIdx, "Insufficient HBAR balance");
+                emit PayrollFailed(agentIdx, "BAL");
                 return;
             }
             (transferOk, ) = ap.agent.call{value: ap.amountPerPeriod}("");
@@ -381,7 +406,7 @@ contract SPARKPayrollVault is Ownable, ReentrancyGuard, HederaScheduleService {
             if (available < ap.amountPerPeriod) {
                 ap.status = ScheduleStatus.Failed;
                 emit InsufficientBalance(agentIdx, ap.amountPerPeriod, available);
-                emit PayrollFailed(agentIdx, "Insufficient token balance");
+                emit PayrollFailed(agentIdx, "BAL");
                 return;
             }
             transferOk = IERC20(paymentToken).transfer(ap.agent, ap.amountPerPeriod);
@@ -389,7 +414,7 @@ contract SPARKPayrollVault is Ownable, ReentrancyGuard, HederaScheduleService {
 
         if (!transferOk) {
             ap.status = ScheduleStatus.Failed;
-            emit PayrollFailed(agentIdx, "Transfer failed");
+            emit PayrollFailed(agentIdx, "XFER");
             return;
         }
 
@@ -424,9 +449,9 @@ contract SPARKPayrollVault is Ownable, ReentrancyGuard, HederaScheduleService {
 
     // ── Cancel Schedule ─────────────────────────────────────
     function cancelPayroll(uint256 agentIdx) external onlyOwner {
-        require(agentIdx < agents.length, "Invalid index");
+        if (agentIdx >= agents.length) revert Idx();
         AgentPayroll storage ap = agents[agentIdx];
-        require(ap.status == ScheduleStatus.Pending, "No pending schedule");
+        if (ap.status != ScheduleStatus.Pending) revert NoPending();
 
         address schedAddr = ap.currentScheduleAddr;
 
@@ -447,20 +472,16 @@ contract SPARKPayrollVault is Ownable, ReentrancyGuard, HederaScheduleService {
 
     /// @dev External wrapper so we can use try/catch
     function _tryDeleteSchedule(address schedAddr) external {
-        require(msg.sender == address(this), "Internal only");
+        if (msg.sender != address(this)) revert InternalOnly();
         _deleteSchedule(schedAddr);
     }
 
     // ── Retry After Failure ─────────────────────────────────
     function retryPayroll(uint256 agentIdx) external onlyOwner {
-        require(agentIdx < agents.length, "Invalid index");
+        if (agentIdx >= agents.length) revert Idx();
         AgentPayroll storage ap = agents[agentIdx];
-        require(
-            ap.status == ScheduleStatus.Failed ||
-                ap.status == ScheduleStatus.Cancelled,
-            "Cannot retry"
-        );
-        require(ap.active, "Agent not active");
+        if (ap.status != ScheduleStatus.Failed && ap.status != ScheduleStatus.Cancelled) revert NoRetry();
+        if (!ap.active) revert NotActive();
 
         uint256 nextTime = block.timestamp + ap.intervalSeconds;
         ap.nextPaymentTime = nextTime;
@@ -475,7 +496,7 @@ contract SPARKPayrollVault is Ownable, ReentrancyGuard, HederaScheduleService {
     function getAgent(
         uint256 idx
     ) external view returns (AgentPayroll memory) {
-        require(idx < agents.length, "Invalid index");
+        if (idx >= agents.length) revert Idx();
         return agents[idx];
     }
 
@@ -490,7 +511,7 @@ contract SPARKPayrollVault is Ownable, ReentrancyGuard, HederaScheduleService {
     function getScheduleRecord(
         uint256 idx
     ) external view returns (ScheduleRecord memory) {
-        require(idx < scheduleHistory.length, "Invalid index");
+        if (idx >= scheduleHistory.length) revert Idx();
         return scheduleHistory[idx];
     }
 
@@ -515,5 +536,426 @@ contract SPARKPayrollVault is Ownable, ReentrancyGuard, HederaScheduleService {
     function getTokenBalance() external view returns (uint256) {
         if (paymentToken == address(0)) return 0;
         return IERC20(paymentToken).balanceOf(address(this));
+    }
+
+    // ╔═══════════════════════════════════════════════════════╗
+    // ║  SUBSCRIPTION SYSTEM — Inbound Pull-Based Payments   ║
+    // ║  Same HSS self-rescheduling, reversed direction       ║
+    // ╚═══════════════════════════════════════════════════════╝
+
+    // ── Subscription Enums & Structs ────────────────────────
+    enum SubPaymentMode {
+        HBAR,
+        Token
+    }
+
+    struct Subscription {
+        address subscriber;
+        uint256 amountPerPeriod;
+        uint256 intervalSeconds;
+        uint256 nextPaymentTime;
+        address currentScheduleAddr;
+        ScheduleStatus status;
+        uint256 totalPaid;
+        uint256 paymentCount;
+        bool active;
+        string name;
+        SubPaymentMode mode;
+        address token; // address(0) for HBAR, token address for ERC-20
+    }
+
+    struct SubScheduleRecord {
+        uint256 subIdx;
+        address scheduleAddress;
+        uint256 scheduledTime;
+        uint256 createdAt;
+        uint256 executedAt;
+        ScheduleStatus status;
+    }
+
+    // ── Subscription State ──────────────────────────────────
+    Subscription[] public subscriptions;
+    mapping(address => uint256[]) public subscriberSubs;
+    mapping(uint256 => uint256) public subHbarBalance; // subIdx → escrowed HBAR
+    SubScheduleRecord[] public subScheduleHistory;
+    mapping(address => uint256) public subScheduleToHistoryIndex;
+    uint256 public collectedHbar;
+    mapping(address => uint256) public collectedTokens;
+
+    // ── Subscription Events ─────────────────────────────────
+    event SubscriptionCreated(
+        uint256 indexed subIdx, address indexed subscriber,
+        string name, uint256 amount, uint256 interval,
+        SubPaymentMode mode, address token
+    );
+    event SubscriptionCancelled(uint256 indexed subIdx, address indexed subscriber, uint256 refund);
+    event SubscriptionUpdated(uint256 indexed subIdx, uint256 newAmount, uint256 newInterval);
+    event HbarDeposited(uint256 indexed subIdx, address indexed subscriber, uint256 amount, uint256 newBalance);
+    event HbarRefunded(uint256 indexed subIdx, address indexed subscriber, uint256 amount);
+    event SubScheduleCreated(uint256 indexed subIdx, address indexed scheduleAddress, uint256 scheduledTime);
+    event SubscriptionExecuted(uint256 indexed subIdx, address indexed subscriber, uint256 amount, uint256 paymentNumber);
+    event SubscriptionFailed(uint256 indexed subIdx, string reason);
+    event SubScheduleCancelled(uint256 indexed subIdx, address indexed scheduleAddress);
+    event SubInsufficientBalance(uint256 indexed subIdx, uint256 required, uint256 available);
+    event SubCapacityUnavailable(uint256 indexed subIdx, uint256 requestedTime);
+    event RevenueWithdrawn(address indexed to, uint256 hbarAmount, address token, uint256 tokenAmount);
+
+    // ── Subscribe HBAR ──────────────────────────────────────
+    /// @notice Create an HBAR subscription. Send HBAR with the call as initial deposit.
+    function subscribeHbar(
+        string calldata name,
+        uint256 amountPerPeriod,
+        uint256 intervalSeconds
+    ) external payable returns (uint256 idx) {
+        if (amountPerPeriod == 0) revert ZeroAmount();
+        if (intervalSeconds < MIN_INTERVAL) revert IntervalTooShort();
+        if (msg.value < amountPerPeriod) revert InsufDeposit();
+        if (subscriptions.length >= MAX_SUBSCRIPTIONS) revert MaxReached();
+
+        idx = subscriptions.length;
+        subscriptions.push(Subscription({
+            subscriber: msg.sender,
+            amountPerPeriod: amountPerPeriod,
+            intervalSeconds: intervalSeconds,
+            nextPaymentTime: 0,
+            currentScheduleAddr: address(0),
+            status: ScheduleStatus.None,
+            totalPaid: 0,
+            paymentCount: 0,
+            active: true,
+            name: name,
+            mode: SubPaymentMode.HBAR,
+            token: address(0)
+        }));
+        subscriberSubs[msg.sender].push(idx);
+        subHbarBalance[idx] = msg.value;
+
+        emit SubscriptionCreated(idx, msg.sender, name, amountPerPeriod, intervalSeconds, SubPaymentMode.HBAR, address(0));
+        emit HbarDeposited(idx, msg.sender, msg.value, msg.value);
+    }
+
+    // ── Subscribe Token (ERC-20 / USDC) ─────────────────────
+    /// @notice Create an ERC-20/USDC subscription. Caller must have approved this contract.
+    function subscribeToken(
+        address token,
+        string calldata name,
+        uint256 amountPerPeriod,
+        uint256 intervalSeconds
+    ) external returns (uint256 idx) {
+        if (token == address(0)) revert UseHbar();
+        if (amountPerPeriod == 0) revert ZeroAmount();
+        if (intervalSeconds < MIN_INTERVAL) revert IntervalTooShort();
+        if (subscriptions.length >= MAX_SUBSCRIPTIONS) revert MaxReached();
+        if (IERC20(token).allowance(msg.sender, address(this)) < amountPerPeriod) revert ApproveFirst();
+
+        idx = subscriptions.length;
+        subscriptions.push(Subscription({
+            subscriber: msg.sender,
+            amountPerPeriod: amountPerPeriod,
+            intervalSeconds: intervalSeconds,
+            nextPaymentTime: 0,
+            currentScheduleAddr: address(0),
+            status: ScheduleStatus.None,
+            totalPaid: 0,
+            paymentCount: 0,
+            active: true,
+            name: name,
+            mode: SubPaymentMode.Token,
+            token: token
+        }));
+        subscriberSubs[msg.sender].push(idx);
+
+        emit SubscriptionCreated(idx, msg.sender, name, amountPerPeriod, intervalSeconds, SubPaymentMode.Token, token);
+    }
+
+    // ── HBAR Top Up ─────────────────────────────────────────
+    /// @notice Add more HBAR to an existing subscription's escrow
+    function topUpSubscription(uint256 subIdx) external payable {
+        if (subIdx >= subscriptions.length) revert Idx();
+        Subscription storage sub = subscriptions[subIdx];
+        if (!sub.active) revert NotActive();
+        if (sub.mode != SubPaymentMode.HBAR) revert NotHbar();
+        if (msg.value == 0) revert ZeroAmount();
+
+        subHbarBalance[subIdx] += msg.value;
+        emit HbarDeposited(subIdx, msg.sender, msg.value, subHbarBalance[subIdx]);
+    }
+
+    // ── Start Subscription Schedule ─────────────────────────
+    /// @notice Start the subscription HSS loop (owner only)
+    function startSubscription(uint256 subIdx) external onlyOwner {
+        if (subIdx >= subscriptions.length) revert Idx();
+        Subscription storage sub = subscriptions[subIdx];
+        if (!sub.active) revert NotActive();
+        if (sub.status == ScheduleStatus.Pending) revert AlreadySched();
+
+        uint256 nextTime = block.timestamp + sub.intervalSeconds;
+        sub.nextPaymentTime = nextTime;
+        _createSubSchedule(subIdx, nextTime);
+    }
+
+    /// @notice Internal: create a subscription scheduled call via HSS
+    function _createSubSchedule(uint256 subIdx, uint256 time) internal {
+        Subscription storage sub = subscriptions[subIdx];
+
+        // Check contract has enough HBAR to cover gas for next scheduled call
+        // ~87 tinybar/gas at 870 gWei (Hedera charges full gasLimit, no refund for scheduled txs)
+        uint256 gasReserve = scheduledCallGasLimit * 87;
+        if (address(this).balance < gasReserve) {
+            sub.status = ScheduleStatus.Failed;
+            emit SubscriptionFailed(subIdx, "GAS");
+            return;
+        }
+
+        bool hasCapacity = _hasScheduleCapacity(time, scheduledCallGasLimit);
+        if (!hasCapacity) {
+            time += 1;
+            hasCapacity = _hasScheduleCapacity(time, scheduledCallGasLimit);
+            if (!hasCapacity) {
+                sub.status = ScheduleStatus.Failed;
+                emit SubCapacityUnavailable(subIdx, time);
+                return;
+            }
+        }
+
+        bytes memory callData = abi.encodeWithSelector(
+            this.executeSubscription.selector,
+            subIdx
+        );
+
+        (int64 rc, address scheduleAddress) = _scheduleCall(
+            address(this), time, scheduledCallGasLimit, 0, callData
+        );
+
+        if (rc != HederaResponseCodes.SUCCESS) {
+            sub.status = ScheduleStatus.Failed;
+            emit SubscriptionFailed(subIdx, "SCF");
+            return;
+        }
+
+        sub.currentScheduleAddr = scheduleAddress;
+        sub.status = ScheduleStatus.Pending;
+        sub.nextPaymentTime = time;
+
+        uint256 histIdx = subScheduleHistory.length;
+        subScheduleHistory.push(SubScheduleRecord({
+            subIdx: subIdx,
+            scheduleAddress: scheduleAddress,
+            scheduledTime: time,
+            createdAt: block.timestamp,
+            executedAt: 0,
+            status: ScheduleStatus.Pending
+        }));
+        subScheduleToHistoryIndex[scheduleAddress] = histIdx;
+
+        emit SubScheduleCreated(subIdx, scheduleAddress, time);
+    }
+
+    // ── Execute Subscription (called by HSS) ────────────────
+    /// @notice Called by HSS at scheduled time. Pulls payment and self-reschedules.
+    function executeSubscription(uint256 subIdx) external nonReentrant {
+        if (msg.sender != address(this) && msg.sender != owner()) revert NotAuth();
+        if (subIdx >= subscriptions.length) revert Idx();
+
+        Subscription storage sub = subscriptions[subIdx];
+
+        if (!sub.active) {
+            sub.status = ScheduleStatus.Failed;
+            emit SubscriptionFailed(subIdx, "OFF");
+            return;
+        }
+
+        bool pullOk;
+
+        if (sub.mode == SubPaymentMode.HBAR) {
+            uint256 escrowed = subHbarBalance[subIdx];
+            if (escrowed < sub.amountPerPeriod) {
+                sub.status = ScheduleStatus.Failed;
+                emit SubInsufficientBalance(subIdx, sub.amountPerPeriod, escrowed);
+                emit SubscriptionFailed(subIdx, "BAL");
+                return;
+            }
+            subHbarBalance[subIdx] -= sub.amountPerPeriod;
+            collectedHbar += sub.amountPerPeriod;
+            pullOk = true;
+        } else {
+            uint256 allowance = IERC20(sub.token).allowance(sub.subscriber, address(this));
+            if (allowance < sub.amountPerPeriod) {
+                sub.status = ScheduleStatus.Failed;
+                emit SubInsufficientBalance(subIdx, sub.amountPerPeriod, allowance);
+                emit SubscriptionFailed(subIdx, "ALW");
+                return;
+            }
+            uint256 balance = IERC20(sub.token).balanceOf(sub.subscriber);
+            if (balance < sub.amountPerPeriod) {
+                sub.status = ScheduleStatus.Failed;
+                emit SubInsufficientBalance(subIdx, sub.amountPerPeriod, balance);
+                emit SubscriptionFailed(subIdx, "BAL");
+                return;
+            }
+            pullOk = IERC20(sub.token).transferFrom(sub.subscriber, address(this), sub.amountPerPeriod);
+        }
+
+        if (!pullOk) {
+            sub.status = ScheduleStatus.Failed;
+            emit SubscriptionFailed(subIdx, "XFER");
+            return;
+        }
+
+        sub.paymentCount += 1;
+        sub.totalPaid += sub.amountPerPeriod;
+        sub.status = ScheduleStatus.Executed;
+
+        if (sub.currentScheduleAddr != address(0)) {
+            uint256 histIdx = subScheduleToHistoryIndex[sub.currentScheduleAddr];
+            if (histIdx < subScheduleHistory.length) {
+                subScheduleHistory[histIdx].status = ScheduleStatus.Executed;
+                subScheduleHistory[histIdx].executedAt = block.timestamp;
+            }
+        }
+
+        emit SubscriptionExecuted(subIdx, sub.subscriber, sub.amountPerPeriod, sub.paymentCount);
+
+        // Self-reschedule next pull
+        if (sub.active) {
+            uint256 nextTime = block.timestamp + sub.intervalSeconds;
+            sub.nextPaymentTime = nextTime;
+            _createSubSchedule(subIdx, nextTime);
+        }
+    }
+
+    // ── Cancel Subscription ─────────────────────────────────
+    /// @notice Cancel a subscription. Subscriber or owner can cancel. Refunds escrowed HBAR.
+    function cancelSubscription(uint256 subIdx) external {
+        if (subIdx >= subscriptions.length) revert Idx();
+        Subscription storage sub = subscriptions[subIdx];
+        if (!sub.active) revert AlreadyCancelled();
+        if (msg.sender != sub.subscriber && msg.sender != owner()) revert NotAuth();
+
+        sub.active = false;
+
+        if (sub.status == ScheduleStatus.Pending && sub.currentScheduleAddr != address(0)) {
+            address schedAddr = sub.currentScheduleAddr;
+            try this._tryDeleteSchedule(schedAddr) {} catch {}
+            uint256 histIdx = subScheduleToHistoryIndex[schedAddr];
+            if (histIdx < subScheduleHistory.length) {
+                subScheduleHistory[histIdx].status = ScheduleStatus.Cancelled;
+            }
+            emit SubScheduleCancelled(subIdx, schedAddr);
+        }
+
+        sub.status = ScheduleStatus.Cancelled;
+        sub.currentScheduleAddr = address(0);
+
+        uint256 refund = 0;
+        if (sub.mode == SubPaymentMode.HBAR) {
+            refund = subHbarBalance[subIdx];
+            if (refund > 0) {
+                subHbarBalance[subIdx] = 0;
+                (bool sent, ) = payable(sub.subscriber).call{value: refund}("");
+                if (!sent) revert XferFail();
+                emit HbarRefunded(subIdx, sub.subscriber, refund);
+            }
+        }
+
+        emit SubscriptionCancelled(subIdx, sub.subscriber, refund);
+    }
+
+    // ── Retry Subscription ──────────────────────────────────
+    function retrySubscription(uint256 subIdx) external onlyOwner {
+        if (subIdx >= subscriptions.length) revert Idx();
+        Subscription storage sub = subscriptions[subIdx];
+        if (sub.status != ScheduleStatus.Failed && sub.status != ScheduleStatus.Cancelled) revert NoRetry();
+        if (!sub.active) revert NotActive();
+
+        uint256 nextTime = block.timestamp + sub.intervalSeconds;
+        sub.nextPaymentTime = nextTime;
+        _createSubSchedule(subIdx, nextTime);
+    }
+
+    // ── Update Subscription ─────────────────────────────────
+    function updateSubscription(uint256 subIdx, uint256 newAmount, uint256 newInterval) external {
+        if (subIdx >= subscriptions.length) revert Idx();
+        Subscription storage sub = subscriptions[subIdx];
+        if (!sub.active) revert NotActive();
+        if (msg.sender != sub.subscriber && msg.sender != owner()) revert NotAuth();
+
+        if (newAmount > 0) sub.amountPerPeriod = newAmount;
+        if (newInterval > 0) {
+            if (newInterval < MIN_INTERVAL) revert IntervalTooShort();
+            sub.intervalSeconds = newInterval;
+        }
+        emit SubscriptionUpdated(subIdx, sub.amountPerPeriod, sub.intervalSeconds);
+    }
+
+    // ── Revenue Withdrawal ──────────────────────────────────
+    /// @notice Withdraw collected HBAR subscription revenue
+    function withdrawSubHbar(uint256 amount) external onlyOwner {
+        if (amount > collectedHbar) revert InsufBal();
+        collectedHbar -= amount;
+        (bool sent, ) = payable(owner()).call{value: amount}("");
+        if (!sent) revert XferFail();
+        emit RevenueWithdrawn(owner(), amount, address(0), 0);
+    }
+
+    /// @notice Withdraw collected ERC-20 token subscription revenue
+    function withdrawSubTokens(address token, uint256 amount) external onlyOwner {
+        if (token == address(0)) revert UseHbar();
+        uint256 bal = IERC20(token).balanceOf(address(this));
+        if (amount > bal) revert InsufBal();
+        bool ok = IERC20(token).transfer(owner(), amount);
+        if (!ok) revert XferFail();
+        emit RevenueWithdrawn(owner(), 0, token, amount);
+    }
+
+    // ── Subscription View Functions ─────────────────────────
+    function getSubscriptionCount() external view returns (uint256) {
+        return subscriptions.length;
+    }
+
+    function getSubscription(uint256 idx) external view returns (Subscription memory) {
+        if (idx >= subscriptions.length) revert Idx();
+        return subscriptions[idx];
+    }
+
+    function getAllSubscriptions() external view returns (Subscription[] memory) {
+        return subscriptions;
+    }
+
+    function getSubscriberSubs(address subscriber) external view returns (uint256[] memory) {
+        return subscriberSubs[subscriber];
+    }
+
+    function getSubHbarBalance(uint256 subIdx) external view returns (uint256) {
+        return subHbarBalance[subIdx];
+    }
+
+    function getCollectedHbar() external view returns (uint256) {
+        return collectedHbar;
+    }
+
+    function getSubScheduleHistoryCount() external view returns (uint256) {
+        return subScheduleHistory.length;
+    }
+
+    function getSubScheduleRecord(uint256 idx) external view returns (SubScheduleRecord memory) {
+        if (idx >= subScheduleHistory.length) revert Idx();
+        return subScheduleHistory[idx];
+    }
+
+    function getSubRecentHistory(uint256 count) external view returns (SubScheduleRecord[] memory) {
+        uint256 total = subScheduleHistory.length;
+        uint256 start = total > count ? total - count : 0;
+        uint256 len = total - start;
+        SubScheduleRecord[] memory records = new SubScheduleRecord[](len);
+        for (uint256 i = 0; i < len; i++) {
+            records[i] = subScheduleHistory[start + i];
+        }
+        return records;
+    }
+
+    function getSubTokenBalance(address token) external view returns (uint256) {
+        if (token == address(0)) return 0;
+        return IERC20(token).balanceOf(address(this));
     }
 }

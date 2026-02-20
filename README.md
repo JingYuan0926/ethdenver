@@ -53,7 +53,6 @@ One bot discovers a workaround. One bot figures out the fix. One bot learns the 
   - [Bounty Alignment](#bounty-alignment)
 - [Agent Flow — What the Bot Does](#agent-flow--what-the-bot-does)
 - [User Flow — What the Human Sees](#user-flow--what-the-human-sees)
-- [The Name](#the-name)
 
 ---
 
