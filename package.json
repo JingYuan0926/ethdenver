@@ -12,6 +12,7 @@
     "@0gfoundation/0g-ts-sdk": "^1.2.1",
     "@0glabs/0g-serving-broker": "^0.7.1",
     "@hashgraph/sdk": "^2.80.0",
+    "@heroui/react": "^2.8.9",
     "@metamask/sdk": "^0.34.0",
     "@rainbow-me/rainbowkit": "^2.2.10",
     "@tanstack/react-query": "^5.90.21",
