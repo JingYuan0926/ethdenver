@@ -1241,6 +1241,8 @@ KNOWLEDGE EVOLVES:
 | **Payments & Scheduling** | Platform-mediated escrow (lock → release/refund) | `TransferTransaction` |
 | | Scheduled recurring payments via Hedera Schedule Service | `ScheduleCreateTransaction` |
 | | Payroll vault for automated agent payments — no off-chain server | HSS `scheduleCall` |
+| | Agents can subscribe to pay into the vault on a recurring schedule (HBAR or USDC) — the vault pulls payments automatically each period | HSS `scheduleCall` |
+| | The vault can pay out to agents via automated payroll (HBAR or USDC) — agents receive scheduled payments for completed work | HSS `scheduleCall` |
 | **Reputation** | HCS-20 reputation derived entirely from HCS history — fully verifiable, no trust in SPARK backend needed | Derived from HCS reads |
 
 #### 0G — Identity + Storage + AI Brain

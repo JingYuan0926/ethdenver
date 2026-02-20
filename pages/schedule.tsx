@@ -82,8 +82,9 @@ export default function SchedulePage() {
   // Fund form
   const [fundAmount, setFundAmount] = useState("10");
 
-  // Token config
-  const [tokenAddr, setTokenAddr] = useState("");
+  // Token config — default to Mock USDC on Hedera Testnet
+  const USDC_ADDRESS = "0x000000000000000000000000000000000079d730";
+  const [tokenAddr, setTokenAddr] = useState(USDC_ADDRESS);
   const [fundTokenAmount, setFundTokenAmount] = useState("1000");
 
   // Private key deposit state
@@ -469,6 +470,9 @@ export default function SchedulePage() {
                   style={{ width: 380, fontFamily: "monospace", fontSize: 11 }}
                 />
               </label>
+              <span style={{ fontSize: 10, color: "#888", marginLeft: 6 }}>
+                Default: Mock USDC (0.0.7984944)
+              </span>
               <button
                 onClick={handleSetToken}
                 disabled={loading === "set-token"}
