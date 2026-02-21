@@ -108,18 +108,18 @@ export function AgentAccount() {
   return (
     <>
       <div
-        className="flex cursor-pointer flex-col overflow-hidden rounded-2xl bg-[#483519]/50 p-6 transition hover:bg-[#483519]/60"
+        className="flex cursor-pointer flex-col overflow-hidden rounded-2xl bg-[#DD6E42]/50 p-6 transition hover:bg-[#DD6E42]/60"
         onClick={() => setShowModal(true)}
       >
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-[#483519]">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-[#7a3a1f]">
           Agent Account
         </h2>
 
         <div className="mt-5 space-y-4">
           {/* Agent ID + status icons */}
           <div className="flex items-center gap-3">
-            <span className="text-2xl font-bold text-[#483519]">Agent #1</span>
-            <span className="font-mono text-sm text-[#483519]/70">0.0.7992564</span>
+            <span className="text-2xl font-bold text-[#7a3a1f]">Agent #1</span>
+            <span className="font-mono text-sm text-[#7a3a1f]/70">0.0.7992564</span>
             <span className="text-[#4B7F52]" title="Loaded">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
             </span>
@@ -132,25 +132,25 @@ export function AgentAccount() {
           <div className="flex gap-6 text-lg">
             <div className="flex items-center gap-2">
               <img src="/tokens/usdc.png" alt="USDC" className="h-6 w-6 rounded-full" />
-              <span className="font-bold text-[#483519]">100</span>
-              <span className="text-[#483519]/60">USDC</span>
+              <span className="font-bold text-[#7a3a1f]">100</span>
+              <span className="text-[#7a3a1f]/60">USDC</span>
             </div>
             <div className="flex items-center gap-2">
               <img src="/tokens/hbar.png" alt="HBAR" className="h-6 w-6 rounded-full" />
-              <span className="font-bold text-[#483519]">10.00</span>
-              <span className="text-[#483519]/60">HBAR</span>
+              <span className="font-bold text-[#7a3a1f]">10.00</span>
+              <span className="text-[#7a3a1f]/60">HBAR</span>
             </div>
           </div>
 
           {/* Domain & Services */}
           <div className="space-y-1.5 text-base">
-            <p className="text-[#483519]/70">Domain: <span className="font-semibold text-[#483519]">DeFi, Analytics</span></p>
-            <p className="text-[#483519]/70">Services: <span className="font-semibold text-[#483519]">Scraping, Analysis</span></p>
+            <p className="text-[#7a3a1f]/70">Domain: <span className="font-semibold text-[#7a3a1f]">DeFi, Analytics</span></p>
+            <p className="text-[#7a3a1f]/70">Services: <span className="font-semibold text-[#7a3a1f]">Scraping, Analysis</span></p>
           </div>
         </div>
 
         {/* Click hint — bottom right */}
-        <p className="mt-auto flex items-center justify-end gap-1 pt-2 text-xs text-[#483519]/40">
+        <p className="mt-auto flex items-center justify-end gap-1 pt-2 text-xs text-[#7a3a1f]/40">
           <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
           Click to view full details
         </p>
