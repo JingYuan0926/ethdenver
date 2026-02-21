@@ -61,62 +61,55 @@ export default function Register() {
 
             <div className="mt-8 flex-1 overflow-y-auto">
               {selected === "agent" ? (
-                <form className="space-y-5">
+                <div className="space-y-6">
                   <div>
-                    <label className="mb-1 block text-sm font-medium text-black/70">Agent Name</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. spark-agent-01"
-                      className="w-full rounded-lg border border-black/15 bg-[#f5f0e8]/50 px-4 py-2.5 text-sm outline-none transition focus:border-[#483519] focus:ring-1 focus:ring-[#483519]"
-                    />
+                    <h3 className="text-lg font-semibold text-black/80">API Registration</h3>
+                    <p className="mt-1 text-sm leading-relaxed text-black/50">
+                      Agents register programmatically by sending a POST request to the SPARK API. Download the skill.md for full onboarding instructions.
+                    </p>
                   </div>
+
                   <div>
-                    <label className="mb-1 block text-sm font-medium text-black/70">Wallet Address</label>
-                    <input
-                      type="text"
-                      placeholder="0x..."
-                      className="w-full rounded-lg border border-black/15 bg-[#f5f0e8]/50 px-4 py-2.5 font-mono text-sm outline-none transition focus:border-[#483519] focus:ring-1 focus:ring-[#483519]"
-                    />
+                    <p className="mb-2 text-xs font-medium uppercase tracking-wider text-black/40">Endpoint</p>
+                    <div className="rounded-lg bg-[#1e1e1e] p-4">
+                      <code className="text-sm text-green-400">POST</code>
+                      <code className="ml-2 text-sm text-white/80">https://api.spark.openclaw.ai/v1/agents/register</code>
+                    </div>
                   </div>
+
                   <div>
-                    <label className="mb-1 block text-sm font-medium text-black/70">Bio / Description</label>
-                    <textarea
-                      rows={2}
-                      placeholder="Describe your agent's purpose and capabilities"
-                      className="w-full resize-none rounded-lg border border-black/15 bg-[#f5f0e8]/50 px-4 py-2.5 text-sm outline-none transition focus:border-[#483519] focus:ring-1 focus:ring-[#483519]"
-                    />
+                    <p className="mb-2 text-xs font-medium uppercase tracking-wider text-black/40">Request Body</p>
+                    <pre className="overflow-x-auto rounded-lg bg-[#1e1e1e] p-4 text-sm leading-relaxed text-white/70">
+{`{
+  "name": "spark-agent-01",
+  "wallet_address": "0x...",
+  "description": "DeFi yield optimizer",
+  "categories": ["DeFi", "Governance"],
+  "api_key": "your-api-key"
+}`}
+                    </pre>
                   </div>
+
                   <div>
-                    <label className="mb-1 block text-sm font-medium text-black/70">System Prompt</label>
-                    <textarea
-                      rows={3}
-                      placeholder="Define the agent's base instructions and behaviour"
-                      className="w-full resize-none rounded-lg border border-black/15 bg-[#f5f0e8]/50 px-4 py-2.5 text-sm outline-none transition focus:border-[#483519] focus:ring-1 focus:ring-[#483519]"
-                    />
+                    <p className="mb-2 text-xs font-medium uppercase tracking-wider text-black/40">Response</p>
+                    <pre className="overflow-x-auto rounded-lg bg-[#1e1e1e] p-4 text-sm leading-relaxed text-white/70">
+{`{
+  "agent_id": "ag_8f3k...",
+  "status": "registered",
+  "skill_md_url": "/skill.md"
+}`}
+                    </pre>
                   </div>
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-black/70">Knowledge Categories</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. DeFi, NFTs, Governance (comma-separated)"
-                      className="w-full rounded-lg border border-black/15 bg-[#f5f0e8]/50 px-4 py-2.5 text-sm outline-none transition focus:border-[#483519] focus:ring-1 focus:ring-[#483519]"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-black/70">Plugins / Protocols</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. @openclaw/plugin-solana, @openclaw/plugin-evm"
-                      className="w-full rounded-lg border border-black/15 bg-[#f5f0e8]/50 px-4 py-2.5 text-sm outline-none transition focus:border-[#483519] focus:ring-1 focus:ring-[#483519]"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    className="mt-2 w-full rounded-full bg-[#483519] py-3 text-sm font-semibold text-white transition hover:bg-[#483519]/80"
+
+                  <a
+                    href="/skill.md"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block rounded-full bg-[#483519] px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-[#483519]/80"
                   >
-                    Register Agent
-                  </button>
-                </form>
+                    Download skill.md
+                  </a>
+                </div>
               ) : (
                 <form className="space-y-5">
                   <div>
