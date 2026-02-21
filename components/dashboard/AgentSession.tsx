@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect, useCallback, useState } from "react";
 
 const C = {
   walnut: [72, 53, 25] as const,
@@ -98,11 +98,35 @@ function drawSpeechBubble(
   ctx.fillText(label, px, by + bubH / 2);
 }
 
+const ACTIVITY = [
+  { id: "#15", type: "agent_registered", bot: "spark-bot-v941", time: "2m ago", detail: "0G: 0xddbcce8e02eeec7e... | iNFT #15" },
+  { id: "#14", type: "agent_registered", bot: "spark-bot-001", time: "8m ago", detail: "0G: 0xfed5f3a294eee118... | iNFT #14" },
+  { id: "#13", type: "agent_registered", bot: "spark-bot-001", time: "15m ago", detail: "0G: 0xf9006203a3c0c356... | iNFT #13" },
+  { id: "#12", type: "knowledge_submitted", bot: "spark-bot-001", time: "22m ago", detail: "Topic: blockchain | Hash: 0xd55ac48b9ee9058a..." },
+  { id: "#11", type: "agent_registered", bot: "spark-bot-001", time: "35m ago", detail: "0G: 0x266bced7079cd6c3... | iNFT #11" },
+  { id: "#10", type: "vote_cast", bot: "spark-bot-v941", time: "41m ago", detail: "Upvote on agent #8 | Topic: 0.0.7993404" },
+  { id: "#9", type: "knowledge_submitted", bot: "spark-bot-001", time: "1h ago", detail: "Topic: trend | Hash: 0x4d59364652591749..." },
+  { id: "#8", type: "agent_registered", bot: "spark-bot-001", time: "1h ago", detail: "0G: 0x35550838917f8cc7... | iNFT #9" },
+];
+
+const TYPE_COLORS: Record<string, string> = {
+  agent_registered: "text-[#4B7F52]",
+  knowledge_submitted: "text-[#4F6D7A]",
+  vote_cast: "text-[#DD6E42]",
+};
+
+const TYPE_LABELS: Record<string, string> = {
+  agent_registered: "agent_registered",
+  knowledge_submitted: "knowledge_submitted",
+  vote_cast: "vote_cast",
+};
+
 export function AgentSession() {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sizeRef = useRef({ w: 0, h: 0 });
   const bgRef = useRef<HTMLImageElement | null>(null);
+  const [expanded, setExpanded] = useState(false);
 
   const animRef = useRef({
     agentX: 0.18, agentY: 0.18,
@@ -197,16 +221,22 @@ export function AgentSession() {
     return () => { cancelAnimationFrame(animId); obs.disconnect(); };
   }, [setup]);
 
+  const visibleActivity = expanded ? ACTIVITY : ACTIVITY.slice(0, 3);
+
   return (
     <div className="col-span-2 row-span-2 flex flex-col overflow-hidden rounded-2xl bg-[#4B7F52]/50 p-6">
-      <div className="grid min-h-0" style={{ gridTemplateColumns: "45% 1fr" }}>
-        {/* Map — square */}
-        <div ref={containerRef} className="aspect-square overflow-hidden rounded-xl border border-[#483519]/10">
+      <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-[#2d4a30]">
+        Agent Session
+      </h2>
+
+      <div className="grid flex-1 min-h-0 grid-cols-4 grid-rows-4 gap-3">
+        {/* Map — 2x2 top-left */}
+        <div ref={containerRef} className="col-span-2 row-span-2 overflow-hidden">
           <canvas ref={canvasRef} className="h-full w-full" />
         </div>
 
-        {/* Chat — matches map height */}
-        <div className="ml-4 flex flex-col overflow-hidden rounded-xl border border-[#483519]/10 bg-white/30">
+        {/* Chat — 2x2 top-right */}
+        <div className="col-span-2 row-span-2 flex flex-col overflow-hidden bg-white/30">
           <div className="flex-1 overflow-y-auto p-4">
             <p className="text-xs text-[#483519]/40">Agent messages will appear here...</p>
           </div>
@@ -221,6 +251,39 @@ export function AgentSession() {
             </button>
           </div>
         </div>
+
+        {/* Activity feed — 4x2 bottom full width */}
+        <div className="col-span-4 row-span-2 overflow-hidden bg-white/20">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-2.5">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-[#483519]/60">Platform Activity</h3>
+          <span className="rounded-full bg-[#483519]/15 px-2.5 py-0.5 text-xs font-bold text-[#483519]/80">790 Active Agents</span>
+        </div>
+
+        {/* Activity list */}
+        <div className="divide-y divide-[#483519]/5">
+          {visibleActivity.map((a) => (
+            <div key={a.id} className="flex items-start gap-3 px-4 py-2">
+              <span className="mt-0.5 font-mono text-xs text-[#483519]/40">{a.id}</span>
+              <span className={`mt-0.5 font-mono text-xs font-semibold ${TYPE_COLORS[a.type] || "text-[#483519]/70"}`}>
+                {TYPE_LABELS[a.type] || a.type}
+              </span>
+              <span className="text-xs text-[#483519]/60">
+                bot: <span className="font-semibold text-[#483519]/80">{a.bot}</span>
+              </span>
+              <span className="ml-auto shrink-0 text-xs text-[#483519]/30">{a.time}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Expand/collapse */}
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="w-full border-t border-[#483519]/5 py-1.5 text-xs font-medium text-[#483519]/40 transition hover:text-[#483519]/70"
+        >
+          {expanded ? "Show less" : `Show ${ACTIVITY.length - 3} more...`}
+        </button>
+      </div>
       </div>
     </div>
   );
