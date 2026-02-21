@@ -46,6 +46,217 @@ function DollarIcon({ size = 16 }: { size?: number }) {
   );
 }
 
+function StarIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+    </svg>
+  );
+}
+
+const VAULT_ADDRESS = "0xdB818b1ED798acD53ab9D15960257b35A05AB44E";
+
+const PREMIUM_PLANS = [
+  { name: "Basic", hbar: "5", interval: 2592000, label: "5 HBAR / month", features: ["Priority chat responses", "Basic analytics"] },
+  { name: "Pro", hbar: "15", interval: 2592000, label: "15 HBAR / month", features: ["Priority chat responses", "Advanced analytics", "Custom training", "API access"] },
+  { name: "Enterprise", hbar: "50", interval: 2592000, label: "50 HBAR / month", features: ["Everything in Pro", "Dedicated compute", "Unlimited training", "Priority support"] },
+];
+
+// ── Premium Subscription Modal ──
+function PremiumModal({
+  onClose,
+  agentName,
+}: {
+  onClose: () => void;
+  agentName: string;
+}) {
+  const [subscribing, setSubscribing] = useState(false);
+  const [subResult, setSubResult] = useState<{ success: boolean; message?: string; error?: string; txHash?: string } | null>(null);
+  const [activeSubs, setActiveSubs] = useState<{ name: string; status: string; totalPaid: string; paymentCount: number; active: boolean }[]>([]);
+  const [loadingSubs, setLoadingSubs] = useState(true);
+
+  // Load existing subscriptions
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`/api/subscription/status?vaultAddress=${VAULT_ADDRESS}`);
+        const data = await res.json();
+        if (data.success && data.subscriptions) {
+          setActiveSubs(data.subscriptions);
+        }
+      } catch { /* ignore */ }
+      setLoadingSubs(false);
+    })();
+  }, []);
+
+  async function handleSubscribe(plan: typeof PREMIUM_PLANS[0]) {
+    setSubscribing(true);
+    setSubResult(null);
+    try {
+      const res = await fetch("/api/subscription/subscribe-hbar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: `${agentName} — ${plan.name} Premium`,
+          amountPerPeriod: plan.hbar,
+          intervalSeconds: plan.interval,
+          deposit: plan.hbar,
+          vaultAddress: VAULT_ADDRESS,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSubResult({ success: true, message: `Subscribed to ${plan.name}!`, txHash: data.txHash });
+        // Refresh subs
+        const refresh = await fetch(`/api/subscription/status?vaultAddress=${VAULT_ADDRESS}`);
+        const refreshData = await refresh.json();
+        if (refreshData.success) setActiveSubs(refreshData.subscriptions);
+      } else {
+        setSubResult({ success: false, error: data.error });
+      }
+    } catch (err) {
+      setSubResult({ success: false, error: String(err) });
+    }
+    setSubscribing(false);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="relative w-full max-w-[700px] max-h-[80vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+        style={{ fontFamily: "monospace" }}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">Subscribe Premium</h2>
+            <p className="text-xs text-gray-500 mt-0.5">Automated HBAR payments via Hedera Scheduled Transactions</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none">&times;</button>
+        </div>
+
+        {/* Result banner */}
+        {subResult && (
+          <div
+            style={{
+              marginBottom: 12, padding: 10, borderRadius: 8, fontSize: 12,
+              background: subResult.success ? "#f0fdf4" : "#fef2f2",
+              border: `1px solid ${subResult.success ? "#86efac" : "#fca5a5"}`,
+              color: subResult.success ? "#166534" : "#991b1b",
+            }}
+          >
+            {subResult.success ? (
+              <>
+                {subResult.message}
+                {subResult.txHash && (
+                  <a
+                    href={`https://hashscan.io/testnet/transaction/${subResult.txHash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: "#2563eb", marginLeft: 6, textDecoration: "underline" }}
+                  >
+                    View Tx
+                  </a>
+                )}
+              </>
+            ) : (
+              `Error: ${subResult.error}`
+            )}
+          </div>
+        )}
+
+        {/* Plans */}
+        <div className="grid grid-cols-3 gap-3 mb-5">
+          {PREMIUM_PLANS.map((plan) => {
+            const isBest = plan.name === "Pro";
+            return (
+              <div
+                key={plan.name}
+                className="relative rounded-xl p-4"
+                style={{
+                  border: isBest ? "2px solid #DD6E42" : "1px solid #e2e8f0",
+                  background: isBest ? "#FFF7ED" : "#f8fafc",
+                }}
+              >
+                {isBest && (
+                  <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 rounded-full bg-[#DD6E42] px-2 py-0.5 text-[9px] font-bold text-white uppercase">
+                    Popular
+                  </span>
+                )}
+                <h3 className="text-sm font-bold text-gray-900">{plan.name}</h3>
+                <p className="mt-1 text-lg font-bold text-[#483519]">{plan.hbar} HBAR</p>
+                <p className="text-[10px] text-gray-500">per month</p>
+                <ul className="mt-3 space-y-1">
+                  {plan.features.map((f) => (
+                    <li key={f} className="flex items-start gap-1.5 text-[11px] text-gray-600">
+                      <span className="mt-0.5 text-[#4B7F52]">&#10003;</span>
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  onClick={() => handleSubscribe(plan)}
+                  disabled={subscribing}
+                  className="mt-4 w-full rounded-lg py-1.5 text-xs font-bold text-white transition disabled:opacity-50"
+                  style={{
+                    background: subscribing ? "#d1d5db" : isBest ? "#DD6E42" : "#483519",
+                    cursor: subscribing ? "wait" : "pointer",
+                  }}
+                >
+                  {subscribing ? "Subscribing..." : "Subscribe"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Active subscriptions */}
+        <div>
+          <h3 className="text-xs font-bold mb-2 text-gray-700">
+            Active Subscriptions {loadingSubs && <span className="text-gray-400 font-normal">(loading...)</span>}
+          </h3>
+          {!loadingSubs && activeSubs.length === 0 && (
+            <p className="text-xs text-gray-400">No subscriptions yet</p>
+          )}
+          {activeSubs.length > 0 && (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+              <thead>
+                <tr style={{ background: "#f1f5f9", textAlign: "left" }}>
+                  <th style={{ padding: 6, border: "1px solid #e2e8f0" }}>Plan</th>
+                  <th style={{ padding: 6, border: "1px solid #e2e8f0" }}>Status</th>
+                  <th style={{ padding: 6, border: "1px solid #e2e8f0" }}>Payments</th>
+                  <th style={{ padding: 6, border: "1px solid #e2e8f0" }}>Total Paid</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activeSubs.map((s, i) => (
+                  <tr key={i}>
+                    <td style={{ padding: 6, border: "1px solid #e2e8f0", fontWeight: "bold" }}>{s.name}</td>
+                    <td style={{ padding: 6, border: "1px solid #e2e8f0" }}>
+                      <span
+                        style={{
+                          padding: "2px 6px", borderRadius: 4, fontSize: 10, fontWeight: "bold",
+                          background: s.active ? "#f0fdf4" : "#f8fafc",
+                          border: `1px solid ${s.active ? "#86efac" : "#e2e8f0"}`,
+                          color: s.active ? "#166534" : "#64748b",
+                        }}
+                      >
+                        {s.active ? "Active" : s.status}
+                      </span>
+                    </td>
+                    <td style={{ padding: 6, border: "1px solid #e2e8f0", textAlign: "center" }}>{s.paymentCount}</td>
+                    <td style={{ padding: 6, border: "1px solid #e2e8f0" }}>{(Number(s.totalPaid) / 1e8).toFixed(2)} HBAR</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Payout History Modal ──
 function PayoutHistoryModal({
   onClose,
@@ -415,6 +626,7 @@ export function AgentAccount() {
   const { agent, setAgent, privateKey } = useAgent();
   const [showModal, setShowModal] = useState(false);
   const [showInftEditor, setShowInftEditor] = useState(false);
+  const [showPremium, setShowPremium] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [showPayout, setShowPayout] = useState(false);
   const [payoutLoading, setPayoutLoading] = useState(false);
@@ -541,6 +753,13 @@ export function AgentAccount() {
           </h2>
           <div className="flex items-center gap-1">
             <button
+              onClick={(e) => { e.stopPropagation(); setShowPremium(true); }}
+              className="rounded-full p-1.5 transition text-[#7a3a1f]/50 hover:bg-[#7a3a1f]/10 hover:text-[#7a3a1f]"
+              title="Subscribe Premium"
+            >
+              <StarIcon size={16} />
+            </button>
+            <button
               onClick={(e) => { e.stopPropagation(); handleOpenPayout(); }}
               className="rounded-full p-1.5 transition text-[#7a3a1f]/50 hover:bg-[#7a3a1f]/10 hover:text-[#7a3a1f]"
               title="Payout History & Earnings"
@@ -603,6 +822,7 @@ export function AgentAccount() {
 
       {showModal && <AgentAccountModal onClose={() => setShowModal(false)} onOpenEditor={() => setShowInftEditor(true)} />}
       {showInftEditor && <InftDataEditor onClose={() => setShowInftEditor(false)} />}
+      {showPremium && <PremiumModal onClose={() => setShowPremium(false)} agentName={displayName} />}
       {showPayout && (
         <PayoutHistoryModal
           onClose={() => setShowPayout(false)}
