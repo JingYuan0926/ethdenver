@@ -73,7 +73,7 @@ function shortAddr(addr: string): string {
 }
 
 export default function SubscriptionPage() {
-  const [vaultAddress, setVaultAddress] = useState(SUBSCRIPTION_VAULT_ADDRESS);
+  const [vaultAddress, setVaultAddress] = useState<string>(SUBSCRIPTION_VAULT_ADDRESS);
   const [vault, setVault] = useState<VaultInfo | null>(null);
   const [subs, setSubs] = useState<SubData[]>([]);
   const [history, setHistory] = useState<HistoryRecord[]>([]);

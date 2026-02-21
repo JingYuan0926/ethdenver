@@ -43,7 +43,7 @@ export default async function handler(
     const paymentToken = await vault.paymentToken();
     const isTokenMode = paymentToken !== ethers.ZeroAddress;
 
-    let amount = 0n;
+    let amount = BigInt(0);
     if (amountPerPeriod) {
       if (isTokenMode) {
         // Token mode: get token decimals and convert
@@ -59,7 +59,7 @@ export default async function handler(
         amount = ethers.parseUnits(String(amountPerPeriod), 8);
       }
     }
-    const interval = intervalSeconds ? BigInt(intervalSeconds) : 0n;
+    const interval = intervalSeconds ? BigInt(intervalSeconds) : BigInt(0);
 
     const tx = await vault.addAgent(agent, name, amount, interval);
     const receipt = await tx.wait();

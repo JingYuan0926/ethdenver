@@ -720,7 +720,7 @@ export default function SparkPage() {
         </div>
 
         <button
-          onClick={handleVote}
+          onClick={() => handleVote()}
           disabled={voteLoading}
           style={{
             marginTop: 12,
@@ -889,7 +889,7 @@ export default function SparkPage() {
                   {approveResult.status as string}
                 </strong>
                 {" "}({approveResult.approvals as number} approvals, {approveResult.rejections as number} rejections)
-                {approveResult.reputationEffect && (
+                {(approveResult.reputationEffect as string) && (
                   <span style={{ color: "#7c3aed" }}>
                     {" "}| Rep: {approveResult.reputationEffect as string}
                   </span>
@@ -1445,7 +1445,7 @@ function OnChainResult({
           value={zgHash}
           onCopy={onCopy}
         />
-        {data.zgUploadTxHash && (
+        {(data.zgUploadTxHash as string) && (
           <LinkRow
             label="Upload Tx"
             value={data.zgUploadTxHash as string}
@@ -1453,7 +1453,7 @@ function OnChainResult({
             onCopy={onCopy}
           />
         )}
-        {data.configHash && (
+        {(data.configHash as string) && (
           <LinkRow
             label="Config Hash"
             value={data.configHash as string}
@@ -2335,17 +2335,17 @@ function TopicSection({
                 <span style={{ fontWeight: "bold", color }}>
                   {msg.action as string}
                 </span>
-                {msg.author && (
+                {(msg.author as string) && (
                   <span style={{ color: "#64748b" }}>
                     by {msg.author as string}
                   </span>
                 )}
-                {msg.botId && (
+                {(msg.botId as string) && (
                   <span style={{ color: "#64748b" }}>
                     bot: {msg.botId as string}
                   </span>
                 )}
-                {msg.category && (
+                {(msg.category as string) && (
                   <span
                     style={{
                       background: `${CATEGORY_COLORS[msg.category as string] || "#475569"}22`,
@@ -2358,13 +2358,13 @@ function TopicSection({
                     {msg.category as string}
                   </span>
                 )}
-                {msg.timestamp && (
+                {(msg.timestamp as string) && (
                   <span style={{ color: "#94a3b8", fontSize: 11 }}>
                     {(msg.timestamp as string).slice(0, 19)}
                   </span>
                 )}
               </div>
-              {msg.zgRootHash && (
+              {(msg.zgRootHash as string) && (
                 <div style={{ marginTop: 4, color: "#64748b" }}>
                   0G: <span
                     onClick={() => onCopy(msg.zgRootHash as string)}
@@ -2376,12 +2376,12 @@ function TopicSection({
                   {msg.iNftTokenId !== undefined && (
                     <span> | iNFT #{msg.iNftTokenId as number}</span>
                   )}
-                  {msg.itemId && (
+                  {(msg.itemId as string) && (
                     <span> | {msg.itemId as string}</span>
                   )}
                 </div>
               )}
-              {msg.content && (
+              {(msg.content as string) && (
                 <div
                   style={{
                     marginTop: 6,
@@ -2397,7 +2397,7 @@ function TopicSection({
                   {msg.content as string}
                 </div>
               )}
-              {msg.subTopics && (
+              {(msg.subTopics as Record<string, string>) && (
                 <div style={{ marginTop: 4, color: "#64748b" }}>
                   Sub-topics: {Object.entries(msg.subTopics as Record<string, string>).map(
                     ([cat, tid]) => `${cat}=${tid}`

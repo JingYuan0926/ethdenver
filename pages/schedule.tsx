@@ -66,7 +66,7 @@ function shortAddr(addr: string): string {
 }
 
 export default function SchedulePage() {
-  const [vaultAddress, setVaultAddress] = useState(PAYROLL_VAULT_ADDRESS);
+  const [vaultAddress, setVaultAddress] = useState<string>(PAYROLL_VAULT_ADDRESS);
   const [vault, setVault] = useState<VaultInfo | null>(null);
   const [agents, setAgents] = useState<AgentData[]>([]);
   const [history, setHistory] = useState<HistoryRecord[]>([]);

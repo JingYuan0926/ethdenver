@@ -42,7 +42,7 @@ export default async function handler(
     const paymentToken = await vault.paymentToken();
     const isTokenMode = paymentToken !== ethers.ZeroAddress;
 
-    let newAmount = 0n;
+    let newAmount = BigInt(0);
     if (amountPerPeriod) {
       if (isTokenMode) {
         const token = new ethers.Contract(
@@ -56,7 +56,7 @@ export default async function handler(
         newAmount = ethers.parseUnits(String(amountPerPeriod), 8);
       }
     }
-    const newInterval = intervalSeconds ? BigInt(intervalSeconds) : 0n;
+    const newInterval = intervalSeconds ? BigInt(intervalSeconds) : BigInt(0);
 
     const tx = await vault.updateAgent(BigInt(agentIdx), newAmount, newInterval);
     const receipt = await tx.wait();

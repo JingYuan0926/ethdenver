@@ -633,10 +633,10 @@ export default function ComputePage() {
                         ? "No"
                         : "Skipped"}
                   </div>
-                  {inferResult.usage && (
+                  {inferResult.usage != null && (
                     <div>
                       Tokens:{" "}
-                      {JSON.stringify(inferResult.usage)}
+                      {JSON.stringify(inferResult.usage as Record<string, unknown>)}
                     </div>
                   )}
                 </div>
