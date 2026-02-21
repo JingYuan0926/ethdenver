@@ -9,13 +9,7 @@ export function Navbar() {
       <Link href="/dashboard" className="text-lg text-[#483519] underline transition hover:opacity-60">
         Dashboard
       </Link>
-      <Link href="/settings" className="text-lg text-[#483519] underline transition hover:opacity-60">
-        Settings
-      </Link>
-      <Link
-        href="/register"
-        className="ml-auto rounded-full bg-[#483519] px-6 py-2 text-sm font-semibold text-white transition hover:bg-[#483519]/80"
-      >
+      <Link href="/register" className="text-lg text-[#483519] underline transition hover:opacity-60">
         Register
       </Link>
     </header>
