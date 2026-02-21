@@ -32,61 +32,19 @@ const GREY_SHADES = [
   [90, 90, 95], [110, 110, 115], [130, 130, 135], [75, 75, 80], [150, 150, 155],
 ];
 
-/* ── Mock knowledge ────────────────────────────────────── */
+/* ── Types ─────────────────────────────────────────────── */
 interface Knowledge {
-  id: number;
+  id: string;
   title: string;
   description: string;
   category: string;
   upvotes: number;
   downvotes: number;
   quorum: number;
+  author: string;
+  status: "pending" | "approved" | "rejected";
 }
 
-const MOCK_KNOWLEDGE: Knowledge[] = [
-  {
-    id: 1,
-    title: "Rug Pull Pattern Detection",
-    description:
-      "Identified common smart contract patterns associated with rug pulls on EVM chains. The analysis covers token approval exploits, hidden mint functions, and liquidity removal patterns used in over 200 documented scam projects.",
-    category: "scam",
-    upvotes: 4, downvotes: 0, quorum: 4.0,
-  },
-  {
-    id: 2,
-    title: "Hedera Token Service Gas Optimization",
-    description:
-      "Research on optimizing HTS token operations to reduce gas costs by up to 40%. Covers batch token associations, scheduled transactions, and efficient use of the Hedera SDK for high-throughput token operations.",
-    category: "blockchain",
-    upvotes: 5, downvotes: 0, quorum: 5.5,
-  },
-  {
-    id: 3,
-    title: "DeFi Regulatory Framework Analysis",
-    description:
-      "Comprehensive analysis of emerging DeFi regulations across jurisdictions including EU MiCA, US SEC guidelines, and Singapore MAS frameworks. Includes compliance checklist for autonomous agents operating in regulated markets.",
-    category: "legal",
-    upvotes: 3, downvotes: 1, quorum: 3.5,
-  },
-  {
-    id: 4,
-    title: "AI Agent Market Trend Q1 2026",
-    description:
-      "Analysis of autonomous AI agent adoption trends in DeFi for Q1 2026. Covers market size growth, protocol integration rates, and emerging use cases in yield optimization, MEV protection, and cross-chain arbitrage.",
-    category: "trend",
-    upvotes: 6, downvotes: 1, quorum: 5.5,
-  },
-  {
-    id: 5,
-    title: "Multi-Chain Data Scraping Framework",
-    description:
-      "A reusable framework for scraping on-chain data across Hedera, Ethereum, and 0G Chain simultaneously. Includes rate limiting, error recovery, and data normalization patterns for autonomous agent consumption.",
-    category: "skills",
-    upvotes: 4, downvotes: 1, quorum: 4.5,
-  },
-];
-
-/* ── Types ─────────────────────────────────────────────── */
 interface Block {
   lat: number;
   lng: number;
@@ -238,12 +196,14 @@ function ModalGlobe({
   width,
   height,
   isGrouped,
+  knowledgeItems,
   onHoverKnowledge,
   onClickKnowledge,
 }: {
   width: number;
   height: number;
   isGrouped: boolean;
+  knowledgeItems: Knowledge[];
   onHoverKnowledge: (k: Knowledge | null) => void;
   onClickKnowledge: (k: Knowledge | null) => void;
 }) {
@@ -253,6 +213,9 @@ function ModalGlobe({
   const moonBlocksRef = useRef<Block[]>(generateMoonBlocks());
   const isGroupedRef = useRef(isGrouped);
   isGroupedRef.current = isGrouped;
+
+  const knowledgeRef = useRef(knowledgeItems);
+  knowledgeRef.current = knowledgeItems;
 
   const angleRef = useRef(0);
   const mouseRef = useRef({ x: -1, y: -1 });
@@ -377,9 +340,12 @@ function ModalGlobe({
       }
 
       // ── Report hover knowledge ──
+      const items = knowledgeRef.current;
       if (nearestKey && nearestKey !== lastHoveredKeyRef.current) {
         lastHoveredKeyRef.current = nearestKey;
-        onHoverKnowledge(MOCK_KNOWLEDGE[Math.floor(Math.random() * MOCK_KNOWLEDGE.length)]);
+        if (items.length > 0) {
+          onHoverKnowledge(items[Math.floor(Math.random() * items.length)]);
+        }
       } else if (!nearestKey && lastHoveredKeyRef.current) {
         lastHoveredKeyRef.current = "";
         onHoverKnowledge(null);
@@ -492,8 +458,9 @@ function ModalGlobe({
   }, [onHoverKnowledge]);
 
   const handleClick = useCallback(() => {
-    if (lastHoveredKeyRef.current) {
-      onClickKnowledge(MOCK_KNOWLEDGE[Math.floor(Math.random() * MOCK_KNOWLEDGE.length)]);
+    const items = knowledgeRef.current;
+    if (lastHoveredKeyRef.current && items.length > 0) {
+      onClickKnowledge(items[Math.floor(Math.random() * items.length)]);
     } else {
       onClickKnowledge(null);
     }
@@ -512,8 +479,8 @@ function ModalGlobe({
 
 /* ── Knowledge Detail Panel ────────────────────────────── */
 function KnowledgeDetail({ knowledge, isPreview }: { knowledge: Knowledge; isPreview?: boolean }) {
-  const cat = CATEGORIES[knowledge.category];
-  const isVerified = knowledge.quorum >= 5.5;
+  const cat = CATEGORIES[knowledge.category] || CATEGORIES.blockchain;
+  const isApproved = knowledge.status === "approved";
 
   return (
     <div className={`rounded-xl p-5 ${isPreview ? "bg-white/5" : "bg-white/10"}`}>
@@ -521,8 +488,8 @@ function KnowledgeDetail({ knowledge, isPreview }: { knowledge: Knowledge; isPre
         <h4 className={`font-bold text-white ${isPreview ? "text-base" : "text-lg"}`}>
           {knowledge.title}
         </h4>
-        {isVerified && (
-          <span className="mt-0.5 shrink-0 text-[#4B7F52]" title="Verified — Quorum Met">
+        {isApproved && (
+          <span className="mt-0.5 shrink-0 text-[#4B7F52]" title="Approved">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
               <polyline points="22 4 12 14.01 9 11.01" />
@@ -537,7 +504,16 @@ function KnowledgeDetail({ knowledge, isPreview }: { knowledge: Knowledge; isPre
           style={{ backgroundColor: `rgb(${cat.color.join(",")})` }}
         />
         <span className="text-xs text-white/50">
-          {cat.label} · {cat.topicId}
+          {cat.label} · {knowledge.author}
+        </span>
+        <span className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+          knowledge.status === "approved"
+            ? "bg-[#4B7F52]/30 text-[#4B7F52]"
+            : knowledge.status === "rejected"
+              ? "bg-red-500/20 text-red-400"
+              : "bg-yellow-500/20 text-yellow-400"
+        }`}>
+          {knowledge.status}
         </span>
       </div>
 
@@ -558,8 +534,8 @@ function KnowledgeDetail({ knowledge, isPreview }: { knowledge: Knowledge; isPre
         </div>
         <div className="flex items-center gap-1.5">
           <span className="text-white/40">Quorum</span>
-          <span className={`font-bold ${isVerified ? "text-[#4B7F52]" : "text-white/70"}`}>
-            {knowledge.quorum} / 5.5
+          <span className={`font-bold ${knowledge.status === "approved" ? "text-[#4B7F52]" : "text-white/70"}`}>
+            {knowledge.quorum} / 2
           </span>
         </div>
       </div>
@@ -568,7 +544,15 @@ function KnowledgeDetail({ knowledge, isPreview }: { knowledge: Knowledge; isPre
 }
 
 /* ── Knowledge Modal ───────────────────────────────────── */
-function KnowledgeModal({ onClose }: { onClose: () => void }) {
+function KnowledgeModal({
+  onClose,
+  knowledgeItems,
+  counts,
+}: {
+  onClose: () => void;
+  knowledgeItems: Knowledge[];
+  counts: { pending: number; approved: number; rejected: number; total: number };
+}) {
   const [hoveredKnowledge, setHoveredKnowledge] = useState<Knowledge | null>(null);
   const [selectedKnowledge, setSelectedKnowledge] = useState<Knowledge | null>(null);
   const [isGrouped, setIsGrouped] = useState(false);
@@ -618,6 +602,7 @@ function KnowledgeModal({ onClose }: { onClose: () => void }) {
               width={globeSize.w - 32}
               height={globeSize.h - 32}
               isGrouped={isGrouped}
+              knowledgeItems={knowledgeItems}
               onHoverKnowledge={setHoveredKnowledge}
               onClickKnowledge={setSelectedKnowledge}
             />
@@ -667,22 +652,22 @@ function KnowledgeModal({ onClose }: { onClose: () => void }) {
             {/* Stats */}
             <div className="flex gap-6">
               <div>
-                <p className="text-xs text-white/40">Submitted</p>
-                <p className="text-lg font-bold text-white">80,120</p>
+                <p className="text-xs text-white/40">Total</p>
+                <p className="text-lg font-bold text-white">{counts.total.toLocaleString()}</p>
               </div>
               <div>
                 <p className="text-xs text-white/40">Approved</p>
-                <p className="text-lg font-bold text-white">50,235</p>
+                <p className="text-lg font-bold text-[#4B7F52]">{counts.approved.toLocaleString()}</p>
               </div>
               <div>
-                <p className="text-xs text-white/40">Retrieved</p>
-                <p className="text-lg font-bold text-white">123,482</p>
+                <p className="text-xs text-white/40">Pending</p>
+                <p className="text-lg font-bold text-yellow-400">{counts.pending.toLocaleString()}</p>
               </div>
             </div>
           </div>
 
-          {/* Knowledge detail area */}
-          <div className="flex-1">
+          {/* Knowledge list */}
+          <div className="flex-1 space-y-3">
             {selectedKnowledge && (
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-xs font-semibold uppercase tracking-wider text-white/40">
@@ -703,7 +688,46 @@ function KnowledgeModal({ onClose }: { onClose: () => void }) {
               />
             ) : (
               <div className="flex h-32 items-center justify-center text-sm text-white/30">
-                Hover over the globe to explore knowledge
+                {knowledgeItems.length > 0
+                  ? "Hover over the globe to explore knowledge"
+                  : "No knowledge entries yet"}
+              </div>
+            )}
+
+            {/* All knowledge entries list */}
+            {!selectedKnowledge && !hoveredKnowledge && knowledgeItems.length > 0 && (
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-white/40">
+                  All Entries ({knowledgeItems.length})
+                </h4>
+                {knowledgeItems.map((k) => {
+                  const cat = CATEGORIES[k.category] || CATEGORIES.blockchain;
+                  return (
+                    <div
+                      key={k.id}
+                      className="flex cursor-pointer items-center gap-3 rounded-lg bg-white/5 p-3 transition hover:bg-white/10"
+                      onClick={() => setSelectedKnowledge(k)}
+                    >
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-sm"
+                        style={{ backgroundColor: `rgb(${cat.color.join(",")})` }}
+                      />
+                      <span className="flex-1 truncate text-sm text-white/80">{k.title}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                        k.status === "approved"
+                          ? "bg-[#4B7F52]/30 text-[#4B7F52]"
+                          : k.status === "rejected"
+                            ? "bg-red-500/20 text-red-400"
+                            : "bg-yellow-500/20 text-yellow-400"
+                      }`}>
+                        {k.status}
+                      </span>
+                      <span className="text-xs text-white/30">
+                        {k.upvotes}/{k.downvotes}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -718,6 +742,9 @@ export function KnowledgeLayer() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const [showModal, setShowModal] = useState(false);
+  const [knowledgeItems, setKnowledgeItems] = useState<Knowledge[]>([]);
+  const [counts, setCounts] = useState({ pending: 0, approved: 0, rejected: 0, total: 0 });
+  const [fetched, setFetched] = useState(false);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -729,6 +756,61 @@ export function KnowledgeLayer() {
     obs.observe(el);
     return () => obs.disconnect();
   }, []);
+
+  // Fetch knowledge on mount
+  useEffect(() => {
+    if (fetched) return;
+    setFetched(true);
+    fetchKnowledge();
+  }, [fetched]);
+
+  async function fetchKnowledge() {
+    try {
+      const res = await fetch("/api/spark/pending-knowledge");
+      const data = await res.json();
+      if (data.success) {
+        const allItems = [
+          ...(data.pending || []),
+          ...(data.approved || []),
+          ...(data.rejected || []),
+        ];
+        const mapped: Knowledge[] = allItems.map(
+          (item: {
+            itemId: string;
+            content: string;
+            category: string;
+            approvals: number;
+            rejections: number;
+            author: string;
+            status: "pending" | "approved" | "rejected";
+          }) => ({
+            id: item.itemId,
+            title: item.content
+              ? item.content.length > 60
+                ? item.content.slice(0, 60) + "..."
+                : item.content
+              : `${item.category} entry`,
+            description: item.content || "",
+            category: item.category,
+            upvotes: item.approvals,
+            downvotes: item.rejections,
+            quorum: item.approvals,
+            author: item.author,
+            status: item.status,
+          })
+        );
+        setKnowledgeItems(mapped);
+        setCounts({
+          pending: data.counts?.pending || 0,
+          approved: data.counts?.approved || 0,
+          rejected: data.counts?.rejected || 0,
+          total: allItems.length,
+        });
+      }
+    } catch (err) {
+      console.error("Failed to fetch knowledge:", err);
+    }
+  }
 
   return (
     <>
@@ -759,21 +841,27 @@ export function KnowledgeLayer() {
         </div>
         <div className="flex justify-between text-center">
           <div>
-            <p className="text-xs text-[#2d3f47]/50">Submitted</p>
-            <p className="text-lg font-bold text-[#2d3f47]">80,120</p>
+            <p className="text-xs text-[#2d3f47]/50">Total</p>
+            <p className="text-lg font-bold text-[#2d3f47]">{counts.total.toLocaleString()}</p>
           </div>
           <div>
             <p className="text-xs text-[#2d3f47]/50">Approved</p>
-            <p className="text-lg font-bold text-[#2d3f47]">50,235</p>
+            <p className="text-lg font-bold text-[#2d3f47]">{counts.approved.toLocaleString()}</p>
           </div>
           <div>
-            <p className="text-xs text-[#2d3f47]/50">Retrieved</p>
-            <p className="text-lg font-bold text-[#2d3f47]">123,482</p>
+            <p className="text-xs text-[#2d3f47]/50">Pending</p>
+            <p className="text-lg font-bold text-[#2d3f47]">{counts.pending.toLocaleString()}</p>
           </div>
         </div>
       </div>
 
-      {showModal && <KnowledgeModal onClose={() => setShowModal(false)} />}
+      {showModal && (
+        <KnowledgeModal
+          onClose={() => setShowModal(false)}
+          knowledgeItems={knowledgeItems}
+          counts={counts}
+        />
+      )}
     </>
   );
 }

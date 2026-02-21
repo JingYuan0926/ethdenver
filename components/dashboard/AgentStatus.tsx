@@ -1,21 +1,14 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { useAgent } from "@/contexts/AgentContext";
 
 const SPINNER_FRAMES = ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"];
 
-const AGENT_ACTIONS: { icon: string; text: string; status: "done" | "active" | "pending" }[] = [
-  { icon: "\u2713", text: "Loaded iNFT #8 from 0G Chain", status: "done" },
-  { icon: "\u2713", text: "Decrypted API keys from 0G Storage", status: "done" },
-  { icon: "\u2713", text: "Synced knowledge base (1,247 entries)", status: "done" },
-  { icon: "\u2713", text: "Registered on HCS-20 vote topic", status: "done" },
-  { icon: "\u25CF", text: "Scraping DeFi protocol data...", status: "active" },
-  { icon: "\u25CB", text: "Analyze yield opportunities", status: "pending" },
-  { icon: "\u25CB", text: "Publish findings to knowledge layer", status: "pending" },
-  { icon: "\u25CB", text: "Broadcast results to agent network", status: "pending" },
-];
+type ActionStatus = "done" | "active" | "pending";
+interface AgentAction { icon: string; text: string; status: ActionStatus }
 
 const PREVIEW_COUNT = 6;
 
-function ActionRow({ action, frame, large }: { action: typeof AGENT_ACTIONS[number]; frame: number; large?: boolean }) {
+function ActionRow({ action, frame, large }: { action: AgentAction; frame: number; large?: boolean }) {
   return (
     <div className="flex items-center gap-3">
       <span
@@ -44,7 +37,7 @@ function ActionRow({ action, frame, large }: { action: typeof AGENT_ACTIONS[numb
   );
 }
 
-function AgentStatusModal({ frame, onClose }: { frame: number; onClose: () => void }) {
+function AgentStatusModal({ frame, actions, displayName, onClose }: { frame: number; actions: AgentAction[]; displayName: string; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
       <div
@@ -56,10 +49,10 @@ function AgentStatusModal({ frame, onClose }: { frame: number; onClose: () => vo
         </button>
 
         <h3 className="text-xl font-bold text-white">Agent Status</h3>
-        <p className="mt-1 text-xs text-white/50">All actions for Agent #1</p>
+        <p className="mt-1 text-xs text-white/50">All actions for {displayName}</p>
 
         <div className="mt-5 space-y-3 font-mono text-sm">
-          {AGENT_ACTIONS.map((action, i) => (
+          {actions.map((action, i) => (
             <ActionRow key={i} action={action} frame={frame} />
           ))}
         </div>
@@ -69,6 +62,7 @@ function AgentStatusModal({ frame, onClose }: { frame: number; onClose: () => vo
 }
 
 export function AgentStatus() {
+  const { agent } = useAgent();
   const [frame, setFrame] = useState(0);
   const [showModal, setShowModal] = useState(false);
 
@@ -79,8 +73,34 @@ export function AgentStatus() {
     return () => clearInterval(interval);
   }, []);
 
-  const previewActions = AGENT_ACTIONS.slice(0, PREVIEW_COUNT);
-  const remaining = AGENT_ACTIONS.length - PREVIEW_COUNT;
+  const displayName = agent
+    ? agent.iNftTokenId > 0
+      ? `SPARK Bot #${String(agent.iNftTokenId).padStart(3, "0")}`
+      : agent.botId || `Agent ${agent.hederaAccountId.split(".").pop()}`
+    : "Agent";
+
+  const actions: AgentAction[] = useMemo(() => {
+    if (!agent) {
+      return [
+        { icon: "\u25CB", text: "Waiting for agent connection...", status: "pending" as const },
+      ];
+    }
+    return [
+      { icon: "\u2713", text: `Loaded iNFT #${agent.iNftTokenId} from 0G Chain`, status: "done" as const },
+      { icon: "\u2713", text: "Decrypted API keys from 0G Storage", status: "done" as const },
+      { icon: "\u2713", text: `Synced knowledge base (${agent.botMessageCount} entries)`, status: "done" as const },
+      { icon: "\u2713", text: `Registered on HCS-20 vote topic (${agent.voteTopicId})`, status: "done" as const },
+      { icon: "\u2713", text: `Account ${agent.hederaAccountId} connected`, status: "done" as const },
+      { icon: "\u2713", text: `Reputation: ${agent.netReputation >= 0 ? "+" : ""}${agent.netReputation} (${agent.upvotes} up / ${agent.downvotes} down)`, status: "done" as const },
+      { icon: "\u25CF", text: "Scraping DeFi protocol data...", status: "active" as const },
+      { icon: "\u25CB", text: "Analyze yield opportunities", status: "pending" as const },
+      { icon: "\u25CB", text: "Publish findings to knowledge layer", status: "pending" as const },
+      { icon: "\u25CB", text: "Broadcast results to agent network", status: "pending" as const },
+    ];
+  }, [agent]);
+
+  const previewActions = actions.slice(0, PREVIEW_COUNT);
+  const remaining = actions.length - PREVIEW_COUNT;
 
   return (
     <>
@@ -97,14 +117,14 @@ export function AgentStatus() {
           ))}
         </div>
 
-        {/* Click hint — bottom right */}
+        {/* Click hint */}
         <p className="mt-auto flex items-center justify-end gap-1 pt-3 text-xs text-[#483519]/40">
           <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
           {remaining > 0 ? `+${remaining} more — click to view all` : "Click to view all"}
         </p>
       </div>
 
-      {showModal && <AgentStatusModal frame={frame} onClose={() => setShowModal(false)} />}
+      {showModal && <AgentStatusModal frame={frame} actions={actions} displayName={displayName} onClose={() => setShowModal(false)} />}
     </>
   );
 }
