@@ -231,12 +231,12 @@ export function AgentSession() {
 
       <div className="grid flex-1 min-h-0 grid-cols-4 grid-rows-4 gap-3">
         {/* Map — 2x2 top-left */}
-        <div ref={containerRef} className="col-span-2 row-span-2 overflow-hidden rounded-xl border border-[#483519]/10">
+        <div ref={containerRef} className="col-span-2 row-span-2 overflow-hidden">
           <canvas ref={canvasRef} className="h-full w-full" />
         </div>
 
         {/* Chat — 2x2 top-right */}
-        <div className="col-span-2 row-span-2 flex flex-col overflow-hidden rounded-xl border border-[#483519]/10 bg-white/30">
+        <div className="col-span-2 row-span-2 flex flex-col overflow-hidden bg-white/30">
           <div className="flex-1 overflow-y-auto p-4">
             <p className="text-xs text-[#483519]/40">Agent messages will appear here...</p>
           </div>
@@ -253,7 +253,7 @@ export function AgentSession() {
         </div>
 
         {/* Activity feed — 4x2 bottom full width */}
-        <div className="col-span-4 row-span-2 overflow-hidden rounded-xl border border-[#483519]/10 bg-white/20">
+        <div className="col-span-4 row-span-2 overflow-hidden bg-white/20">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-2.5">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-[#483519]/60">Platform Activity</h3>
