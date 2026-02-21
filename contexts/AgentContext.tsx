@@ -37,6 +37,7 @@ export interface AgentData {
 
   // 0G Storage
   zgRootHash: string;
+  zgUploadTxHash: string;
 
   // Reputation
   upvotes: number;

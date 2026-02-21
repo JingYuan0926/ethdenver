@@ -162,10 +162,24 @@ export default function GatedPage() {
   const [payoutTransferring, setPayoutTransferring] = useState(false);
   const [payoutResult, setPayoutResult] = useState<ApiResult | null>(null);
   const [payoutActionLoading, setPayoutActionLoading] = useState("");
+  const [claimLoading, setClaimLoading] = useState(false);
+  const [showPayoutHistory, setShowPayoutHistory] = useState(false);
+  const [payoutHistory, setPayoutHistory] = useState<Array<{
+    agentIdx: number; scheduleAddress: string; scheduledTime: number;
+    createdAt: number; executedAt: number; status: number;
+  }>>([]);
+  const [payoutHistoryLoading, setPayoutHistoryLoading] = useState(false);
 
   // ── Derived ───────────────────────────────────────────────────
   const evmAddress = agentData?.success ? (agentData.evmAddress as string) || "" : "";
   const hasAccess = true; // subStatus?.hasAccess ?? false;
+
+  // Auto-fill payout address with loaded agent's EVM address
+  useEffect(() => {
+    if (evmAddress && !payoutAddress) {
+      setPayoutAddress(evmAddress);
+    }
+  }, [evmAddress, payoutAddress]);
 
   // ── Handlers ──────────────────────────────────────────────────
   async function handleLoadAgent() {
@@ -519,6 +533,59 @@ export default function GatedPage() {
       setPayoutResult({ success: false, error: String(err) });
     }
     setPayoutTransferring(false);
+  }
+
+  async function handleClaimPayout() {
+    setClaimLoading(true);
+    setPayoutResult(null);
+    try {
+      // Convert 0x EVM address to Hedera account ID format
+      // 0x00000000000000000000000000000000007a156e → strip leading zeros → 0.0.{decimal}
+      const hex = "0x00000000000000000000000000000000007a156e";
+      const accountNum = parseInt(hex.slice(2), 16);
+      const accountId = `0.0.${accountNum}`;
+      const res = await fetch("/api/hedera/transfer-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tokenId: "0.0.7984944",
+          receiverAccountId: accountId,
+          amount: 10000 * 1_000_000, // 10,000 USDC (6 decimals)
+        }),
+      });
+      const result = await res.json();
+      setPayoutResult(result.success
+        ? { success: true, message: `Claimed 10,000 USDC to ${accountId}`, action: "claimed" }
+        : { success: false, error: result.error });
+    } catch (err) {
+      setPayoutResult({ success: false, error: String(err) });
+    }
+    setClaimLoading(false);
+  }
+
+  async function handleFetchPayoutHistory() {
+    setPayoutHistoryLoading(true);
+    setShowPayoutHistory(true);
+    try {
+      const res = await fetch("/api/schedule/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vaultAddress: "0xdB818b1ED798acD53ab9D15960257b35A05AB44E" }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        // Filter history for contributor agents only (agent index from payoutAgents)
+        setPayoutHistory(data.history || []);
+        // Also refresh contributor agents
+        const payoutRes = await fetch("/api/spark/payout");
+        const payoutData = await payoutRes.json();
+        if (payoutData.success) {
+          setPayoutAgents(payoutData.agents);
+          setPayoutVaultBalance(payoutData.vaultBalance);
+        }
+      }
+    } catch { /* ignore */ }
+    setPayoutHistoryLoading(false);
   }
 
   async function handlePayoutAction(action: "cancel" | "start", agentIdx: number) {
@@ -1225,6 +1292,18 @@ export default function GatedPage() {
           >
             {payoutLoading ? "..." : "Refresh"}
           </button>
+          <button
+            onClick={handleFetchPayoutHistory}
+            disabled={payoutHistoryLoading}
+            title="View payout history & earnings"
+            style={{
+              padding: "10px 20px", fontSize: 14, fontFamily: "monospace", fontWeight: "bold",
+              cursor: payoutHistoryLoading ? "wait" : "pointer",
+              background: payoutHistoryLoading ? "#ccc" : "#0ea5e9", color: "#fff", border: "none", borderRadius: 4,
+            }}
+          >
+            {payoutHistoryLoading ? "Loading..." : "Payout"}
+          </button>
         </div>
 
         {/* Transfer result */}
@@ -1322,6 +1401,155 @@ export default function GatedPage() {
           </div>
         )}
       </section>
+
+      {/* ═══ PAYOUT HISTORY MODAL ═══ */}
+      {showPayoutHistory && (
+        <div
+          onClick={() => setShowPayoutHistory(false)}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+            display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "#fff", borderRadius: 12, padding: 24, maxWidth: 800, width: "90%",
+              maxHeight: "80vh", overflow: "auto", boxShadow: "0 8px 32px rgba(0,0,0,0.3)",
+              fontFamily: "monospace",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h2 style={{ margin: 0 }}>📊 Payout History & Earnings</h2>
+              <button
+                onClick={() => setShowPayoutHistory(false)}
+                style={{ fontSize: 20, cursor: "pointer", background: "none", border: "none", color: "#64748b" }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Earnings Summary */}
+            {(() => {
+              const contributorAgents = payoutAgents;
+              const contributorIdxSet = new Set(contributorAgents.map((a) => a.idx));
+              const totalEarned = contributorAgents.reduce((s, a) => s + Number(a.totalPaid), 0);
+              const totalPayments = contributorAgents.reduce((s, a) => s + a.payments, 0);
+              const activeCount = contributorAgents.filter((a) => a.status === 1).length;
+              const contributorHistory = payoutHistory.filter((h) => contributorIdxSet.has(h.agentIdx));
+
+              return (
+                <>
+                  {/* Summary cards */}
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+                    <div style={{ textAlign: "center", padding: "12px 20px", background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 8, flex: 1, minWidth: 120 }}>
+                      <div style={{ fontSize: 24, fontWeight: "bold", color: "#16a34a" }}>{(totalEarned / 1e6).toFixed(2)}</div>
+                      <div style={{ fontSize: 11, color: "#166534" }}>Total Earned (USDC)</div>
+                    </div>
+                    <div style={{ textAlign: "center", padding: "12px 20px", background: "#e0e7ff", border: "1px solid #a5b4fc", borderRadius: 8, flex: 1, minWidth: 120 }}>
+                      <div style={{ fontSize: 24, fontWeight: "bold", color: "#3730a3" }}>{totalPayments}</div>
+                      <div style={{ fontSize: 11, color: "#4338ca" }}>Total Payments</div>
+                    </div>
+                    <div style={{ textAlign: "center", padding: "12px 20px", background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: 8, flex: 1, minWidth: 120 }}>
+                      <div style={{ fontSize: 24, fontWeight: "bold", color: "#92400e" }}>{activeCount}</div>
+                      <div style={{ fontSize: 11, color: "#a16207" }}>Active Streams</div>
+                    </div>
+                    <div style={{ textAlign: "center", padding: "12px 20px", background: "#fce7f3", border: "1px solid #f9a8d4", borderRadius: 8, flex: 1, minWidth: 120 }}>
+                      <div style={{ fontSize: 24, fontWeight: "bold", color: "#9d174d" }}>{contributorAgents.length}</div>
+                      <div style={{ fontSize: 11, color: "#be185d" }}>Contributors</div>
+                    </div>
+                  </div>
+
+                  {/* Per-contributor breakdown */}
+                  {contributorAgents.length > 0 && (
+                    <div style={{ marginBottom: 16 }}>
+                      <h3 style={{ fontSize: 14, margin: "0 0 8px 0" }}>Per-Contributor Earnings</h3>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                        <thead>
+                          <tr style={{ background: "#f1f5f9", textAlign: "left" }}>
+                            <th style={{ padding: 6, border: "1px solid #e2e8f0" }}>Name</th>
+                            <th style={{ padding: 6, border: "1px solid #e2e8f0" }}>Address</th>
+                            <th style={{ padding: 6, border: "1px solid #e2e8f0" }}>Rate</th>
+                            <th style={{ padding: 6, border: "1px solid #e2e8f0" }}>Payments</th>
+                            <th style={{ padding: 6, border: "1px solid #e2e8f0" }}>Total Earned</th>
+                            <th style={{ padding: 6, border: "1px solid #e2e8f0" }}>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {contributorAgents.map((a) => {
+                            const sc = HSS_STATUS_COLORS[a.status] || HSS_STATUS_COLORS[0];
+                            return (
+                              <tr key={a.idx}>
+                                <td style={{ padding: 6, border: "1px solid #e2e8f0", fontWeight: "bold" }}>{a.name}</td>
+                                <td style={{ padding: 6, border: "1px solid #e2e8f0" }}>
+                                  <a href={`https://hashscan.io/testnet/account/${a.address}`} target="_blank" rel="noopener noreferrer" style={{ color: "#2563eb", fontSize: 10 }}>
+                                    {shortAddr(a.address)}
+                                  </a>
+                                </td>
+                                <td style={{ padding: 6, border: "1px solid #e2e8f0" }}>{formatUsdc(a.amount)} / {a.interval}s</td>
+                                <td style={{ padding: 6, border: "1px solid #e2e8f0", textAlign: "center" }}>{a.payments}</td>
+                                <td style={{ padding: 6, border: "1px solid #e2e8f0", fontWeight: "bold", color: "#16a34a" }}>{formatUsdc(a.totalPaid)}</td>
+                                <td style={{ padding: 6, border: "1px solid #e2e8f0" }}>
+                                  <span style={{ background: sc.bg, border: `1px solid ${sc.border}`, color: sc.text, padding: "2px 6px", borderRadius: 4, fontSize: 10, fontWeight: "bold" }}>
+                                    {HSS_STATUS_LABELS[a.status] || "Unknown"}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Execution History */}
+                  <h3 style={{ fontSize: 14, margin: "0 0 8px 0" }}>Execution History</h3>
+                  {contributorHistory.length > 0 ? (
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                      <thead>
+                        <tr style={{ background: "#f1f5f9", textAlign: "left" }}>
+                          <th style={{ padding: 6, border: "1px solid #e2e8f0" }}>Agent</th>
+                          <th style={{ padding: 6, border: "1px solid #e2e8f0" }}>Schedule</th>
+                          <th style={{ padding: 6, border: "1px solid #e2e8f0" }}>Scheduled For</th>
+                          <th style={{ padding: 6, border: "1px solid #e2e8f0" }}>Executed</th>
+                          <th style={{ padding: 6, border: "1px solid #e2e8f0" }}>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {contributorHistory
+                          .sort((a, b) => (b.executedAt || b.scheduledTime) - (a.executedAt || a.scheduledTime))
+                          .map((h, i) => {
+                            const sc = HSS_STATUS_COLORS[h.status] || HSS_STATUS_COLORS[0];
+                            const agentName = payoutAgents.find((a) => a.idx === h.agentIdx)?.name || `#${h.agentIdx}`;
+                            return (
+                              <tr key={i}>
+                                <td style={{ padding: 6, border: "1px solid #e2e8f0", fontWeight: "bold" }}>{agentName}</td>
+                                <td style={{ padding: 6, border: "1px solid #e2e8f0" }}>
+                                  <a href={`https://hashscan.io/testnet/contract/${h.scheduleAddress}`} target="_blank" rel="noopener noreferrer" style={{ color: "#2563eb", fontSize: 10 }}>
+                                    {shortAddr(h.scheduleAddress)}
+                                  </a>
+                                </td>
+                                <td style={{ padding: 6, border: "1px solid #e2e8f0" }}>{hssFormatTime(h.scheduledTime)}</td>
+                                <td style={{ padding: 6, border: "1px solid #e2e8f0" }}>{hssFormatTime(h.executedAt)}</td>
+                                <td style={{ padding: 6, border: "1px solid #e2e8f0" }}>
+                                  <span style={{ background: sc.bg, border: `1px solid ${sc.border}`, color: sc.text, padding: "2px 6px", borderRadius: 4, fontSize: 10, fontWeight: "bold" }}>
+                                    {HSS_STATUS_LABELS[h.status] || "Unknown"}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <p style={{ color: "#94a3b8", fontSize: 12 }}>No execution history yet.</p>
+                  )}
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from "react";
+import { useAgent } from "@/contexts/AgentContext";
 
 /* ── Category mapping ──────────────────────────────────── */
 const CATEGORIES: Record<string, { color: number[]; topicId: string; label: string }> = {
@@ -555,11 +556,15 @@ function KnowledgeModal({
   knowledgeItems,
   counts,
   onRefresh,
+  privateKey,
+  voteTopicMap,
 }: {
   onClose: () => void;
   knowledgeItems: Knowledge[];
   counts: { pending: number; approved: number; rejected: number; total: number };
   onRefresh: () => void;
+  privateKey: string;
+  voteTopicMap: Record<string, string>;
 }) {
   const [hoveredKnowledge, setHoveredKnowledge] = useState<Knowledge | null>(null);
   const [selectedKnowledge, setSelectedKnowledge] = useState<Knowledge | null>(null);
@@ -567,6 +572,9 @@ function KnowledgeModal({
   const [activeFilter, setActiveFilter] = useState<FilterTab>("accepted");
   const [refreshing, setRefreshing] = useState(false);
   const [showGatedRegistry, setShowGatedRegistry] = useState(false);
+  const [votingId, setVotingId] = useState<string | null>(null);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [actionResult, setActionResult] = useState<{ success: boolean; message?: string; error?: string } | null>(null);
   const globeContainerRef = useRef<HTMLDivElement>(null);
   const [globeSize, setGlobeSize] = useState<{ w: number; h: number } | null>(null);
 
@@ -602,6 +610,64 @@ function KnowledgeModal({
     setRefreshing(true);
     await onRefresh();
     setRefreshing(false);
+  }
+
+  async function handleVote(authorAccountId: string, type: "upvote" | "downvote", itemId: string) {
+    if (!privateKey) {
+      setActionResult({ success: false, error: "Load an agent first" });
+      return;
+    }
+    setVotingId(itemId + type);
+    setActionResult(null);
+    try {
+      const res = await fetch("/api/spark/vote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          voterPrivateKey: privateKey,
+          targetAccountId: authorAccountId,
+          voteType: type,
+        }),
+      });
+      const result = await res.json();
+      if (result.success) {
+        onRefresh();
+      } else {
+        setActionResult({ success: false, error: result.error });
+      }
+    } catch (err) {
+      setActionResult({ success: false, error: String(err) });
+    }
+    setVotingId(null);
+  }
+
+  async function handleApprove(itemId: string, vote: "approve" | "reject") {
+    if (!privateKey) {
+      setActionResult({ success: false, error: "Load an agent first" });
+      return;
+    }
+    setApprovingId(itemId + vote);
+    setActionResult(null);
+    try {
+      const res = await fetch("/api/spark/approve-knowledge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          itemId,
+          vote,
+          hederaPrivateKey: privateKey,
+        }),
+      });
+      const result = await res.json();
+      if (result.success) {
+        onRefresh();
+      } else {
+        setActionResult({ success: false, error: result.error });
+      }
+    } catch (err) {
+      setActionResult({ success: false, error: String(err) });
+    }
+    setApprovingId(null);
   }
 
   return (
@@ -816,14 +882,15 @@ function KnowledgeModal({
                 <tr className="border-b border-white/10 text-left text-[11px] font-semibold uppercase tracking-wider text-white/30">
                   <th className="pb-2 pr-4">Category</th>
                   <th className="pb-2 pr-4">Content</th>
-                  <th className="pb-2 pr-4">Author</th>
-                  <th className="pb-2">Votes</th>
+                  <th className="pb-2 pr-4">Topic</th>
+                  <th className="pb-2 pr-4">Votes</th>
+                  <th className="pb-2">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredItems.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="py-8 text-center text-sm text-white/30">
+                    <td colSpan={5} className="py-8 text-center text-sm text-white/30">
                       No entries found
                     </td>
                   </tr>
@@ -834,7 +901,7 @@ function KnowledgeModal({
                       <tr
                         key={k.id}
                         className="cursor-pointer border-b border-white/5 transition hover:bg-white/5"
-                        onClick={() => setSelectedKnowledge(k)}
+                        onClick={() => window.open(`https://hashscan.io/testnet/topic/${cat.topicId}`, "_blank")}
                       >
                         <td className="py-2.5 pr-4">
                           <span className="flex items-center gap-2 text-xs text-white/70">
@@ -848,13 +915,78 @@ function KnowledgeModal({
                         <td className="max-w-[300px] truncate py-2.5 pr-4 text-xs text-white/60">
                           {k.description || "(no content)"}
                         </td>
-                        <td className="py-2.5 pr-4 font-mono text-xs text-white/40">
-                          {k.author}
+                        <td className="py-2.5 pr-4" onClick={(e) => e.stopPropagation()}>
+                          <a
+                            href={`https://hashscan.io/testnet/topic/${voteTopicMap[k.author] || k.author}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-mono text-xs text-blue-400 hover:text-blue-300 hover:underline"
+                          >
+                            {voteTopicMap[k.author] || k.author}
+                          </a>
                         </td>
                         <td className="py-2.5 text-xs">
                           <span className="text-[#4B7F52]">{k.upvotes}</span>
                           <span className="text-white/20"> / </span>
                           <span className="text-red-400">{k.downvotes}</span>
+                        </td>
+                        <td className="py-2.5" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center gap-1">
+                            {/* Upvote */}
+                            <button
+                              onClick={() => handleVote(k.author, "upvote", k.id)}
+                              disabled={!!votingId}
+                              className="rounded p-1 text-white/30 transition hover:bg-[#4B7F52]/20 hover:text-[#4B7F52] disabled:opacity-30"
+                              title="Upvote (HCS-20)"
+                            >
+                              {votingId === k.id + "upvote" ? (
+                                <span className="inline-block h-3 w-3 animate-spin rounded-full border border-[#4B7F52] border-t-transparent" />
+                              ) : (
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+                              )}
+                            </button>
+                            {/* Downvote */}
+                            <button
+                              onClick={() => handleVote(k.author, "downvote", k.id)}
+                              disabled={!!votingId}
+                              className="rounded p-1 text-white/30 transition hover:bg-red-500/20 hover:text-red-400 disabled:opacity-30"
+                              title="Downvote (HCS-20)"
+                            >
+                              {votingId === k.id + "downvote" ? (
+                                <span className="inline-block h-3 w-3 animate-spin rounded-full border border-red-400 border-t-transparent" />
+                              ) : (
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M19 12l-7 7-7-7" /></svg>
+                              )}
+                            </button>
+                            {/* Divider */}
+                            <span className="mx-0.5 h-3 w-px bg-white/10" />
+                            {/* Approve */}
+                            <button
+                              onClick={() => handleApprove(k.id, "approve")}
+                              disabled={!!approvingId || k.status === "approved"}
+                              className="rounded p-1 text-white/30 transition hover:bg-[#4B7F52]/20 hover:text-[#4B7F52] disabled:opacity-30"
+                              title="Approve knowledge"
+                            >
+                              {approvingId === k.id + "approve" ? (
+                                <span className="inline-block h-3 w-3 animate-spin rounded-full border border-[#4B7F52] border-t-transparent" />
+                              ) : (
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                              )}
+                            </button>
+                            {/* Reject */}
+                            <button
+                              onClick={() => handleApprove(k.id, "reject")}
+                              disabled={!!approvingId || k.status === "rejected"}
+                              className="rounded p-1 text-white/30 transition hover:bg-red-500/20 hover:text-red-400 disabled:opacity-30"
+                              title="Reject knowledge"
+                            >
+                              {approvingId === k.id + "reject" ? (
+                                <span className="inline-block h-3 w-3 animate-spin rounded-full border border-red-400 border-t-transparent" />
+                              ) : (
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                              )}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -871,11 +1003,13 @@ function KnowledgeModal({
 
 /* ── Main Export ────────────────────────────────────────── */
 export function KnowledgeLayer() {
+  const { privateKey } = useAgent();
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [knowledgeItems, setKnowledgeItems] = useState<Knowledge[]>([]);
   const [counts, setCounts] = useState({ pending: 0, approved: 0, rejected: 0, total: 0 });
+  const [voteTopicMap, setVoteTopicMap] = useState<Record<string, string>>({});
   const [fetched, setFetched] = useState(false);
 
   useEffect(() => {
@@ -898,8 +1032,23 @@ export function KnowledgeLayer() {
 
   async function fetchKnowledge() {
     try {
-      const res = await fetch("/api/spark/pending-knowledge");
-      const data = await res.json();
+      const [knowledgeRes, agentsRes] = await Promise.all([
+        fetch("/api/spark/pending-knowledge"),
+        fetch("/api/spark/agents"),
+      ]);
+      const [data, agentsData] = await Promise.all([knowledgeRes.json(), agentsRes.json()]);
+
+      // Build accountId → voteTopicId map
+      if (agentsData.success) {
+        const map: Record<string, string> = {};
+        for (const a of agentsData.agents) {
+          if (a.hederaAccountId && a.voteTopicId) {
+            map[a.hederaAccountId] = a.voteTopicId;
+          }
+        }
+        setVoteTopicMap(map);
+      }
+
       if (data.success) {
         const allItems = [
           ...(data.pending || []),
@@ -994,6 +1143,8 @@ export function KnowledgeLayer() {
           knowledgeItems={knowledgeItems}
           counts={counts}
           onRefresh={fetchKnowledge}
+          privateKey={privateKey}
+          voteTopicMap={voteTopicMap}
         />
       )}
     </>

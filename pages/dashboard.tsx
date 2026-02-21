@@ -6,6 +6,7 @@ import { AgentSession } from "@/components/dashboard/AgentSession";
 import { KnowledgeLayer } from "@/components/dashboard/KnowledgeLayer";
 import { AgentAccount } from "@/components/dashboard/AgentAccount";
 import { AgentProvider, useAgent, AgentData } from "@/contexts/AgentContext";
+import { AgentComputePanel } from "@/components/dashboard/AgentComputePanel";
 
 const REGISTER_STEPS = [
   "Creating Hedera Account",
@@ -143,6 +144,7 @@ function AuthGate() {
           ? [{ dataDescription: `0g://storage/${result.zgRootHash}`, dataHash: "" }]
           : [],
         zgRootHash: result.zgRootHash || "",
+        zgUploadTxHash: result.zgUploadTxHash || "",
         upvotes: 0,
         downvotes: 0,
         netReputation: 0,
@@ -199,6 +201,7 @@ function AuthGate() {
           })
         ),
         zgRootHash: result.zgRootHash || "",
+        zgUploadTxHash: result.zgUploadTxHash || "",
         upvotes: result.upvotes || 0,
         downvotes: result.downvotes || 0,
         netReputation: result.netReputation || 0,
@@ -551,6 +554,7 @@ function AuthGate() {
 
 function DashboardContent() {
   const { agent } = useAgent();
+  const [showComputePanel, setShowComputePanel] = useState(false);
 
   if (!agent) return <AuthGate />;
 
@@ -564,6 +568,20 @@ function DashboardContent() {
         <KnowledgeLayer />
         <AgentAccount />
       </div>
+
+      {/* Floating action button */}
+      <button
+        onClick={() => setShowComputePanel((v) => !v)}
+        className="fixed bottom-6 right-6 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-[#DD6E42] text-white shadow-lg transition hover:bg-[#c55e38] hover:shadow-xl active:scale-95"
+        title="Agent Compute & Chat"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
+      </button>
+
+      <AgentComputePanel
+        isOpen={showComputePanel}
+        onClose={() => setShowComputePanel(false)}
+      />
     </div>
   );
 }
