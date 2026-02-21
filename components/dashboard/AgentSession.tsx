@@ -1,4 +1,5 @@
-import { useRef, useEffect, useCallback, useState } from "react";
+import { useRef, useEffect, useCallback, useState, useMemo } from "react";
+import { useAgent } from "@/contexts/AgentContext";
 
 const C = {
   walnut: [72, 53, 25] as const,
@@ -98,35 +99,140 @@ function drawSpeechBubble(
   ctx.fillText(label, px, by + bubH / 2);
 }
 
-const ACTIVITY = [
-  { id: "#15", type: "agent_registered", bot: "spark-bot-v941", time: "2m ago", detail: "0G: 0xddbcce8e02eeec7e... | iNFT #15" },
-  { id: "#14", type: "agent_registered", bot: "spark-bot-001", time: "8m ago", detail: "0G: 0xfed5f3a294eee118... | iNFT #14" },
-  { id: "#13", type: "agent_registered", bot: "spark-bot-001", time: "15m ago", detail: "0G: 0xf9006203a3c0c356... | iNFT #13" },
-  { id: "#12", type: "knowledge_submitted", bot: "spark-bot-001", time: "22m ago", detail: "Topic: blockchain | Hash: 0xd55ac48b9ee9058a..." },
-  { id: "#11", type: "agent_registered", bot: "spark-bot-001", time: "35m ago", detail: "0G: 0x266bced7079cd6c3... | iNFT #11" },
-  { id: "#10", type: "vote_cast", bot: "spark-bot-v941", time: "41m ago", detail: "Upvote on agent #8 | Topic: 0.0.7993404" },
-  { id: "#9", type: "knowledge_submitted", bot: "spark-bot-001", time: "1h ago", detail: "Topic: trend | Hash: 0x4d59364652591749..." },
-  { id: "#8", type: "agent_registered", bot: "spark-bot-001", time: "1h ago", detail: "0G: 0x35550838917f8cc7... | iNFT #9" },
+interface ActivityEntry {
+  id: string;
+  type: string;
+  bot: string;
+  time: string;
+  detail: string;
+}
+
+function timeAgo(consensusTimestamp: string): string {
+  const secs = parseFloat(consensusTimestamp);
+  const date = new Date(secs * 1000);
+  const diff = Date.now() - date.getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function parseActivity(msg: Record<string, unknown>, seqNo: number): ActivityEntry {
+  const type = (msg.type as string) || "unknown";
+  const bot = (msg.botId as string) || (msg.bot_id as string) || "unknown";
+  const time = msg._consensusAt ? timeAgo(msg._consensusAt as string) : "";
+  let detail = "";
+
+  if (type === "agent_registered") {
+    const evmAddr = (msg.evmAddress as string) || "";
+    const iNft = msg.iNftTokenId ?? msg.inft_token_id ?? "";
+    detail = `0G: ${evmAddr ? evmAddr.slice(0, 20) + "..." : "—"} | iNFT #${iNft}`;
+  } else if (type === "knowledge_submitted") {
+    const cat = (msg.category as string) || "";
+    const hash = (msg.dataHash as string) || (msg.data_hash as string) || "";
+    detail = `Topic: ${cat} | Hash: ${hash ? hash.slice(0, 20) + "..." : "—"}`;
+  } else if (type === "vote_cast") {
+    const vote = (msg.vote as string) || "";
+    const target = (msg.targetBot as string) || (msg.target_bot as string) || "";
+    detail = `${vote} on ${target}`;
+  } else {
+    detail = JSON.stringify(msg).slice(0, 60);
+  }
+
+  return { id: `#${seqNo}`, type, bot, time, detail };
+}
+
+const FALLBACK_ACTIVITY: ActivityEntry[] = [
+  { id: "#—", type: "info", bot: "system", time: "", detail: "Loading master topic logs..." },
 ];
 
 const TYPE_COLORS: Record<string, string> = {
   agent_registered: "text-[#4B7F52]",
   knowledge_submitted: "text-[#4F6D7A]",
   vote_cast: "text-[#DD6E42]",
-};
-
-const TYPE_LABELS: Record<string, string> = {
-  agent_registered: "agent_registered",
-  knowledge_submitted: "knowledge_submitted",
-  vote_cast: "vote_cast",
+  info: "text-[#483519]/50",
 };
 
 export function AgentSession() {
+  const { agent } = useAgent();
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
   const sizeRef = useRef({ w: 0, h: 0 });
   const bgRef = useRef<HTMLImageElement | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [activity, setActivity] = useState<ActivityEntry[]>(FALLBACK_ACTIVITY);
+  const [masterTopicId, setMasterTopicId] = useState<string | null>(null);
+
+  // Chat state
+  const [chatInput, setChatInput] = useState("");
+  const [chatHistory, setChatHistory] = useState<{ role: "user" | "agent"; text: string }[]>([]);
+  const [chatLoading, setChatLoading] = useState(false);
+
+  // Auto-scroll on new messages
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatHistory, chatLoading]);
+
+  async function handleChat() {
+    if (!agent || !chatInput.trim()) return;
+    const userMsg = chatInput.trim();
+    setChatInput("");
+    setChatHistory((prev) => [...prev, { role: "user", text: userMsg }]);
+    setChatLoading(true);
+    try {
+      const res = await fetch("/api/inft/infer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tokenId: agent.iNftTokenId,
+          message: userMsg,
+          userAddress: agent.evmAddress,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setChatHistory((prev) => [...prev, { role: "agent", text: `Error: ${data.error}` }]);
+      } else {
+        setChatHistory((prev) => [
+          ...prev,
+          { role: "agent", text: data.response + (data.simulated ? " [simulated]" : "") },
+        ]);
+      }
+    } catch (err: unknown) {
+      setChatHistory((prev) => [
+        ...prev,
+        { role: "agent", text: `Error: ${err instanceof Error ? err.message : String(err)}` },
+      ]);
+    } finally {
+      setChatLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchLedger() {
+      try {
+        const res = await fetch("/api/spark/ledger");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled || !data.success) return;
+        setMasterTopicId(data.masterTopicId || null);
+        const msgs: Record<string, unknown>[] = data.ledger?.master?.messages || [];
+        if (msgs.length === 0) return;
+        const parsed = msgs
+          .map((m) => parseActivity(m, (m._seqNo as number) || 0))
+          .reverse();
+        setActivity(parsed);
+      } catch {
+        // keep fallback
+      }
+    }
+    fetchLedger();
+    return () => { cancelled = true; };
+  }, []);
 
   const animRef = useRef({
     agentX: 0.18, agentY: 0.18,
@@ -221,7 +327,7 @@ export function AgentSession() {
     return () => { cancelAnimationFrame(animId); obs.disconnect(); };
   }, [setup]);
 
-  const visibleActivity = expanded ? ACTIVITY : ACTIVITY.slice(0, 3);
+  const visibleActivity = expanded ? activity : activity.slice(0, 3);
 
   return (
     <div className="col-span-2 row-span-2 flex flex-col overflow-hidden rounded-2xl bg-[#4B7F52]/50 p-6">
@@ -236,18 +342,60 @@ export function AgentSession() {
         </div>
 
         {/* Chat — 2x2 top-right */}
-        <div className="col-span-2 row-span-2 flex flex-col overflow-hidden bg-white/30">
-          <div className="flex-1 overflow-y-auto p-4">
-            <p className="text-xs text-[#483519]/40">Agent messages will appear here...</p>
+        <div className="col-span-2 row-span-2 flex flex-col overflow-hidden rounded-lg bg-white/30">
+          <div className="border-b border-[#483519]/10 px-3 py-1.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-[#483519]/50">
+              Chat with iNFT #{agent?.iNftTokenId ?? "—"}
+            </p>
+          </div>
+          <div className="flex-1 overflow-y-auto px-3 py-2">
+            {chatHistory.length === 0 && (
+              <p className="mt-2 text-center text-xs text-[#483519]/30">
+                Send a message to talk to your agent.
+              </p>
+            )}
+            {chatHistory.map((msg, i) => (
+              <div
+                key={i}
+                className={`mb-2 flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+              >
+                <div
+                  className={`max-w-[85%] rounded-xl px-3 py-1.5 text-xs leading-relaxed ${
+                    msg.role === "user"
+                      ? "bg-[#483519] text-white"
+                      : "bg-[#483519]/10 text-[#483519]"
+                  }`}
+                  style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+                >
+                  {msg.text}
+                </div>
+              </div>
+            ))}
+            {chatLoading && (
+              <div className="mb-2 flex justify-start">
+                <div className="rounded-xl bg-[#483519]/10 px-3 py-1.5 text-xs text-[#483519]/50">
+                  Agent is thinking...
+                </div>
+              </div>
+            )}
+            <div ref={chatEndRef} />
           </div>
           <div className="flex items-center gap-2 border-t border-[#483519]/10 px-3 py-2">
             <input
               type="text"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && !chatLoading && handleChat()}
               placeholder="Chat with your agent..."
-              className="flex-1 rounded-lg border border-[#483519]/15 bg-white px-3 py-1.5 text-sm outline-none transition placeholder:text-[#483519]/30 focus:border-[#483519] focus:ring-1 focus:ring-[#483519]"
+              disabled={!agent || chatLoading}
+              className="flex-1 rounded-lg border border-[#483519]/15 bg-white px-3 py-1.5 text-xs outline-none transition placeholder:text-[#483519]/30 focus:border-[#483519] focus:ring-1 focus:ring-[#483519] disabled:opacity-50"
             />
-            <button className="rounded-lg bg-[#483519] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[#483519]/80">
-              Send
+            <button
+              onClick={handleChat}
+              disabled={!agent || chatLoading || !chatInput.trim()}
+              className="rounded-lg bg-[#483519] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-[#483519]/80 disabled:opacity-50"
+            >
+              {chatLoading ? "..." : "Send"}
             </button>
           </div>
         </div>
@@ -256,8 +404,20 @@ export function AgentSession() {
         <div className="col-span-4 row-span-2 overflow-hidden bg-white/20">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-2.5">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-[#483519]/60">Platform Activity</h3>
-          <span className="rounded-full bg-[#483519]/15 px-2.5 py-0.5 text-xs font-bold text-[#483519]/80">790 Active Agents</span>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-[#483519]/60">
+            Platform Activity
+            {masterTopicId && (
+              <a
+                href={`https://hashscan.io/testnet/topic/${masterTopicId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ml-2 font-mono text-[10px] normal-case tracking-normal text-[#483519]/40 transition hover:text-[#483519]/70"
+              >
+                (Master Topic: {masterTopicId})
+              </a>
+            )}
+          </h3>
+          <span className="rounded-full bg-[#483519]/15 px-2.5 py-0.5 text-xs font-bold text-[#483519]/80">{activity.length} Logs</span>
         </div>
 
         {/* Activity list */}
@@ -266,7 +426,7 @@ export function AgentSession() {
             <div key={a.id} className="flex items-start gap-3 px-4 py-2">
               <span className="mt-0.5 font-mono text-xs text-[#483519]/40">{a.id}</span>
               <span className={`mt-0.5 font-mono text-xs font-semibold ${TYPE_COLORS[a.type] || "text-[#483519]/70"}`}>
-                {TYPE_LABELS[a.type] || a.type}
+                {a.type}
               </span>
               <span className="text-xs text-[#483519]/60">
                 bot: <span className="font-semibold text-[#483519]/80">{a.bot}</span>
@@ -281,7 +441,7 @@ export function AgentSession() {
           onClick={() => setExpanded(!expanded)}
           className="w-full border-t border-[#483519]/5 py-1.5 text-xs font-medium text-[#483519]/40 transition hover:text-[#483519]/70"
         >
-          {expanded ? "Show less" : `Show ${ACTIVITY.length - 3} more...`}
+          {expanded ? "Show less" : `Show ${activity.length - 3} more...`}
         </button>
       </div>
       </div>

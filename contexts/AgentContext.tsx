@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, ReactNode } from "react";
 
 export interface AgentProfile {
   botId: string;
@@ -48,21 +48,45 @@ export interface AgentData {
   registeredAt: string;
 }
 
+const STORAGE_KEY = "spark_private_key";
+
 interface AgentContextValue {
   agent: AgentData | null;
   setAgent: (agent: AgentData | null) => void;
   privateKey: string;
   setPrivateKey: (key: string) => void;
+  savedKey: string | null;
+  signOut: () => void;
 }
 
 const AgentContext = createContext<AgentContextValue | null>(null);
 
+function getSavedKey(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(STORAGE_KEY);
+}
+
 export function AgentProvider({ children }: { children: ReactNode }) {
   const [agent, setAgent] = useState<AgentData | null>(null);
-  const [privateKey, setPrivateKey] = useState("");
+  const [privateKey, _setPrivateKey] = useState("");
+
+  const setPrivateKey = useCallback((key: string) => {
+    _setPrivateKey(key);
+    if (key) {
+      localStorage.setItem(STORAGE_KEY, key);
+    }
+  }, []);
+
+  const signOut = useCallback(() => {
+    setAgent(null);
+    _setPrivateKey("");
+    localStorage.removeItem(STORAGE_KEY);
+  }, []);
+
+  const savedKey = getSavedKey();
 
   return (
-    <AgentContext.Provider value={{ agent, setAgent, privateKey, setPrivateKey }}>
+    <AgentContext.Provider value={{ agent, setAgent, privateKey, setPrivateKey, savedKey, signOut }}>
       {children}
     </AgentContext.Provider>
   );

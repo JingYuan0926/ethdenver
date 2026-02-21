@@ -211,8 +211,14 @@ export default async function handler(
 
     // 3. Fetch agent config from 0G Storage
     let agentConfig: AgentConfig | null = null;
+    console.log(`[infer] tokenId=${tokenId}, iDatas count=${iDatas.length}`);
+    if (iDatas.length > 0) {
+      console.log(`[infer] dataDescription: ${iDatas[0].dataDescription}`);
+      console.log(`[infer] dataHash: ${iDatas[0].dataHash}`);
+    }
     if (iDatas.length > 0 && iDatas[0].dataDescription) {
       agentConfig = await fetchConfigFromStorage(iDatas[0].dataDescription);
+      console.log(`[infer] agentConfig fetched: ${!!agentConfig}, provider: ${agentConfig?.modelProvider}, hasKey: ${!!agentConfig?.apiKey}, encrypted: ${agentConfig?.encrypted}`);
     }
 
     // 4. If we have a stored config with API key — decrypt and call the provider
@@ -227,7 +233,9 @@ export default async function handler(
         realApiKey = agentConfig.encrypted
           ? decrypt(agentConfig.apiKey)
           : agentConfig.apiKey;
-      } catch {
+        console.log(`[infer] Decrypted key OK, provider=${provider}, model=${model}, keyPrefix=${realApiKey.slice(0, 8)}...`);
+      } catch (decErr) {
+        console.error(`[infer] Decrypt failed:`, decErr);
         return res.status(500).json({
           error: "Failed to decrypt agent API key. Config may be corrupted.",
         });

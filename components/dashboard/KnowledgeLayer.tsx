@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from "react";
+import { useAgent } from "@/contexts/AgentContext";
 
 /* ── Category mapping ──────────────────────────────────── */
 const CATEGORIES: Record<string, { color: number[]; topicId: string; label: string }> = {
@@ -199,6 +200,7 @@ function ModalGlobe({
   knowledgeItems,
   onHoverKnowledge,
   onClickKnowledge,
+  onMoonClick,
 }: {
   width: number;
   height: number;
@@ -206,6 +208,7 @@ function ModalGlobe({
   knowledgeItems: Knowledge[];
   onHoverKnowledge: (k: Knowledge | null) => void;
   onClickKnowledge: (k: Knowledge | null) => void;
+  onMoonClick?: () => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const randomBlocksRef = useRef<Block[]>(generateBlocks());
@@ -220,6 +223,7 @@ function ModalGlobe({
   const angleRef = useRef(0);
   const mouseRef = useRef({ x: -1, y: -1 });
   const isHoveringGlobeRef = useRef(false);
+  const isHoveringMoonRef = useRef(false);
   const raysRef = useRef<LightRay[]>([]);
   const lastRayTimeRef = useRef(0);
   const lastHoveredKeyRef = useRef("");
@@ -268,6 +272,7 @@ function ModalGlobe({
       const isOverMoon = mdx * mdx + mdy * mdy < moonRadius * moonRadius;
 
       isHoveringGlobeRef.current = isOverGlobe || isOverMoon;
+      isHoveringMoonRef.current = isOverMoon;
 
       // ── Spawn light rays ──
       if (timestamp - lastRayTimeRef.current > 400) {
@@ -458,18 +463,22 @@ function ModalGlobe({
   }, [onHoverKnowledge]);
 
   const handleClick = useCallback(() => {
+    if (isHoveringMoonRef.current && onMoonClick) {
+      onMoonClick();
+      return;
+    }
     const items = knowledgeRef.current;
     if (lastHoveredKeyRef.current && items.length > 0) {
       onClickKnowledge(items[Math.floor(Math.random() * items.length)]);
     } else {
       onClickKnowledge(null);
     }
-  }, [onClickKnowledge]);
+  }, [onClickKnowledge, onMoonClick]);
 
   return (
     <canvas
       ref={canvasRef}
-      style={{ width, height }}
+      style={{ width, height, cursor: isHoveringMoonRef.current ? "pointer" : undefined }}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
       onClick={handleClick}
@@ -478,7 +487,19 @@ function ModalGlobe({
 }
 
 /* ── Knowledge Detail Panel ────────────────────────────── */
-function KnowledgeDetail({ knowledge, isPreview }: { knowledge: Knowledge; isPreview?: boolean }) {
+function KnowledgeDetail({
+  knowledge,
+  isPreview,
+  onVote,
+  voteLoading,
+  voteResult,
+}: {
+  knowledge: Knowledge;
+  isPreview?: boolean;
+  onVote?: (itemId: string, vote: "approve" | "reject") => void;
+  voteLoading?: boolean;
+  voteResult?: { success: boolean; error?: string; status?: string } | null;
+}) {
   const cat = CATEGORIES[knowledge.category] || CATEGORIES.blockchain;
   const isApproved = knowledge.status === "approved";
 
@@ -538,7 +559,40 @@ function KnowledgeDetail({ knowledge, isPreview }: { knowledge: Knowledge; isPre
             {knowledge.quorum} / 2
           </span>
         </div>
+
+        {/* Vote buttons */}
+        {onVote && knowledge.status === "pending" && (
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={() => onVote(knowledge.id, "approve")}
+              disabled={voteLoading}
+              className="rounded-lg bg-[#4B7F52]/20 px-3 py-1.5 text-xs font-bold text-[#4B7F52] transition hover:bg-[#4B7F52]/40 disabled:opacity-40"
+            >
+              {voteLoading ? "..." : "Approve"}
+            </button>
+            <button
+              onClick={() => onVote(knowledge.id, "reject")}
+              disabled={voteLoading}
+              className="rounded-lg bg-red-500/20 px-3 py-1.5 text-xs font-bold text-red-400 transition hover:bg-red-500/40 disabled:opacity-40"
+            >
+              {voteLoading ? "..." : "Reject"}
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* Vote result feedback */}
+      {voteResult && (
+        <div className={`mt-3 rounded-lg p-2.5 text-xs ${
+          voteResult.success
+            ? "bg-[#4B7F52]/20 text-[#4B7F52]"
+            : "bg-red-500/10 text-red-400"
+        }`}>
+          {voteResult.success
+            ? `Vote recorded — status: ${voteResult.status}`
+            : `Error: ${voteResult.error}`}
+        </div>
+      )}
     </div>
   );
 }
@@ -548,16 +602,153 @@ function KnowledgeModal({
   onClose,
   knowledgeItems,
   counts,
+  onRefresh,
 }: {
   onClose: () => void;
   knowledgeItems: Knowledge[];
   counts: { pending: number; approved: number; rejected: number; total: number };
+  onRefresh?: () => void;
 }) {
+  const { agent, privateKey } = useAgent();
   const [hoveredKnowledge, setHoveredKnowledge] = useState<Knowledge | null>(null);
   const [selectedKnowledge, setSelectedKnowledge] = useState<Knowledge | null>(null);
   const [isGrouped, setIsGrouped] = useState(false);
+  const [registryFilter, setRegistryFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
   const globeContainerRef = useRef<HTMLDivElement>(null);
+
+  // Vote state
+  const [voteLoading, setVoteLoading] = useState(false);
+  const [voteResult, setVoteResult] = useState<{ success: boolean; error?: string; status?: string } | null>(null);
+
+  async function handleVote(itemId: string, vote: "approve" | "reject") {
+    if (!privateKey) {
+      setVoteResult({ success: false, error: "No agent loaded — load an agent first" });
+      return;
+    }
+    setVoteLoading(true);
+    setVoteResult(null);
+    try {
+      const res = await fetch("/api/spark/approve-knowledge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ itemId, vote, hederaPrivateKey: privateKey }),
+      });
+      const result = await res.json();
+      setVoteResult({
+        success: result.success,
+        error: result.error,
+        status: result.status,
+      });
+      if (result.success && onRefresh) {
+        setTimeout(onRefresh, 1000);
+      }
+    } catch (err) {
+      setVoteResult({ success: false, error: err instanceof Error ? err.message : String(err) });
+    }
+    setVoteLoading(false);
+  }
   const [globeSize, setGlobeSize] = useState<{ w: number; h: number } | null>(null);
+
+  // Subscription state
+  const [showSubPanel, setShowSubPanel] = useState(false);
+  const [subLoading, setSubLoading] = useState(false);
+  const [subStatus, setSubStatus] = useState<{
+    hasAccess: boolean;
+    subscription?: { name: string; status: number; active: boolean; paymentCount: number; totalPaid: string; nextPaymentTime: number };
+  } | null>(null);
+  const [subError, setSubError] = useState<string | null>(null);
+
+  async function checkSubscription() {
+    if (!agent?.evmAddress) return;
+    setSubLoading(true);
+    setSubError(null);
+    try {
+      const res = await fetch("/api/spark/check-access", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subscriberAddress: agent.evmAddress }),
+      });
+      const result = await res.json();
+      if (result.success) {
+        setSubStatus({ hasAccess: result.hasAccess, subscription: result.subscription });
+      } else {
+        setSubError(result.error || "Failed to check status");
+      }
+    } catch (err) {
+      setSubError(err instanceof Error ? err.message : String(err));
+    }
+    setSubLoading(false);
+  }
+
+  async function handleSubscribe() {
+    if (!agent?.evmAddress) return;
+    setSubLoading(true);
+    setSubError(null);
+    try {
+      // Check for existing reusable subscription
+      const statusRes = await fetch("/api/subscription/status");
+      const statusData = await statusRes.json();
+      let reuseIdx = -1;
+      if (statusData.success) {
+        const allSubs = statusData.subscriptions as { idx: number; name: string; status: string | number; active: boolean }[];
+        const myName = `gated-knowledge-${agent.evmAddress.toLowerCase()}`;
+        for (const sub of allSubs) {
+          if (sub.name.toLowerCase() !== myName) continue;
+          const sn = typeof sub.status === "number" ? sub.status : 0;
+          if (sn === 0 && sub.active) { reuseIdx = sub.idx; break; }
+        }
+      }
+
+      if (reuseIdx >= 0) {
+        const startRes = await fetch("/api/subscription/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ subIdx: reuseIdx }),
+        });
+        const startResult = await startRes.json();
+        if (!startResult.success) throw new Error(startResult.error);
+      } else {
+        // Create new
+        const createRes = await fetch("/api/subscription/subscribe-token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            token: "0x000000000000000000000000000000000079d730",
+            name: `gated-knowledge-${agent.evmAddress.toLowerCase()}`,
+            amountPerPeriod: "1",
+            intervalSeconds: 10,
+          }),
+        });
+        const createResult = await createRes.json();
+        if (!createResult.success) throw new Error(createResult.error);
+
+        // Find and start new subscription
+        const newStatusRes = await fetch("/api/subscription/status");
+        const newStatusData = await newStatusRes.json();
+        if (newStatusData.success) {
+          const allSubs = newStatusData.subscriptions as { idx: number }[];
+          if (allSubs.length > 0) {
+            const latestIdx = allSubs[allSubs.length - 1].idx;
+            await fetch("/api/subscription/start", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ subIdx: latestIdx }),
+            });
+          }
+        }
+      }
+
+      await checkSubscription();
+    } catch (err) {
+      setSubError(err instanceof Error ? err.message : String(err));
+    }
+    setSubLoading(false);
+  }
+
+  function handleMoonClick() {
+    setShowSubPanel(true);
+    checkSubscription();
+  }
 
   useEffect(() => {
     const el = globeContainerRef.current;
@@ -569,8 +760,6 @@ function KnowledgeModal({
     obs.observe(el);
     return () => obs.disconnect();
   }, []);
-
-  const displayKnowledge = selectedKnowledge || hoveredKnowledge;
 
   return (
     <div
@@ -605,12 +794,77 @@ function KnowledgeModal({
               knowledgeItems={knowledgeItems}
               onHoverKnowledge={setHoveredKnowledge}
               onClickKnowledge={setSelectedKnowledge}
+              onMoonClick={handleMoonClick}
             />
           )}
         </div>
 
+        {/* Subscription Panel Overlay */}
+        {showSubPanel && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div className="w-full max-w-md rounded-2xl bg-[#2d3f47] p-8 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-bold text-white">Gated Knowledge Subscription</h3>
+                <button onClick={() => setShowSubPanel(false)} className="text-white/40 transition hover:text-white">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                </button>
+              </div>
+              <p className="mt-2 text-sm text-white/50">
+                Subscribe to access gated knowledge entries. Payments are automated via Hedera Schedule Service — 1 USDC every 10 seconds.
+              </p>
+
+              {!agent?.evmAddress && (
+                <p className="mt-4 text-sm text-[#DD6E42]">Load an agent first to subscribe.</p>
+              )}
+
+              {/* Status */}
+              {subStatus && (
+                <div className={`mt-4 rounded-xl p-4 ${subStatus.hasAccess ? "bg-[#4B7F52]/20 border border-[#4B7F52]/40" : "bg-[#DD6E42]/10 border border-[#DD6E42]/30"}`}>
+                  <p className={`text-base font-bold ${subStatus.hasAccess ? "text-[#4B7F52]" : "text-[#DD6E42]"}`}>
+                    {subStatus.hasAccess ? "ACCESS GRANTED" : "NO ACCESS"}
+                  </p>
+                  {subStatus.subscription ? (
+                    <div className="mt-2 space-y-1 text-xs text-white/60">
+                      <p>Status: <span className="font-semibold text-white/80">{subStatus.subscription.status === 1 ? "Pending" : subStatus.subscription.status === 2 ? "Executed" : "Inactive"}</span></p>
+                      <p>Active: <span className="font-semibold text-white/80">{subStatus.subscription.active ? "Yes" : "No"}</span></p>
+                      <p>Payments: <span className="font-semibold text-white/80">{subStatus.subscription.paymentCount}</span></p>
+                      <p>Total Paid: <span className="font-semibold text-white/80">{(Number(subStatus.subscription.totalPaid) / 1e6).toFixed(2)} USDC</span></p>
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-xs text-white/40">No active subscription found.</p>
+                  )}
+                </div>
+              )}
+
+              {subError && (
+                <div className="mt-3 rounded-lg bg-red-500/10 border border-red-500/30 p-3 text-xs text-red-400">
+                  {subError}
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="mt-5 flex gap-3">
+                <button
+                  onClick={checkSubscription}
+                  disabled={subLoading || !agent?.evmAddress}
+                  className="rounded-lg bg-white/10 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/20 disabled:opacity-40"
+                >
+                  {subLoading ? "Checking..." : "Check Status"}
+                </button>
+                <button
+                  onClick={handleSubscribe}
+                  disabled={subLoading || !agent?.evmAddress}
+                  className="rounded-lg bg-[#DD6E42] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#c55e38] disabled:opacity-40"
+                >
+                  {subLoading ? "Processing..." : "Subscribe (1 USDC / 10s)"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Right — Content (70%) */}
-        <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-6">
+        <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-hidden p-6 pb-0">
           <div className="flex items-center gap-3">
             <h3 className="text-lg font-bold text-white">Knowledge Layer</h3>
             <button
@@ -649,85 +903,139 @@ function KnowledgeModal({
               </div>
             </div>
 
-            {/* Stats */}
-            <div className="flex gap-6">
-              <div>
-                <p className="text-xs text-white/40">Total</p>
-                <p className="text-lg font-bold text-white">{counts.total.toLocaleString()}</p>
-              </div>
-              <div>
-                <p className="text-xs text-white/40">Approved</p>
-                <p className="text-lg font-bold text-[#4B7F52]">{counts.approved.toLocaleString()}</p>
-              </div>
-              <div>
-                <p className="text-xs text-white/40">Pending</p>
-                <p className="text-lg font-bold text-yellow-400">{counts.pending.toLocaleString()}</p>
-              </div>
+            {/* Summary count boxes */}
+            <div className="grid grid-cols-4 gap-3">
+              {[
+                { label: "Total", value: counts.total, color: "text-white", border: "border-white/10", bg: "bg-white/5" },
+                { label: "Pending", value: counts.pending, color: "text-yellow-400", border: "border-yellow-400/30", bg: "bg-yellow-400/5" },
+                { label: "Approved", value: counts.approved, color: "text-[#4B7F52]", border: "border-[#4B7F52]/30", bg: "bg-[#4B7F52]/10" },
+                { label: "Rejected", value: counts.rejected, color: "text-red-400", border: "border-red-400/30", bg: "bg-red-400/5" },
+              ].map((s) => (
+                <div key={s.label} className={`aspect-square rounded-xl border ${s.border} ${s.bg} flex flex-col items-center justify-center`}>
+                  <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
+                  <p className="text-[10px] text-white/40">{s.label}</p>
+                </div>
+              ))}
             </div>
           </div>
 
-          {/* Knowledge list */}
-          <div className="flex-1 space-y-3">
-            {selectedKnowledge && (
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-xs font-semibold uppercase tracking-wider text-white/40">
-                  Pinned Knowledge
-                </span>
+          {/* Filter tabs + entries */}
+          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-6 pb-6">
+            {/* Filter tabs */}
+            <div className="flex gap-1.5">
+              {(["all", "pending", "approved", "rejected"] as const).map((f) => (
                 <button
-                  onClick={() => setSelectedKnowledge(null)}
-                  className="text-xs text-white/30 transition hover:text-white/60"
+                  key={f}
+                  onClick={() => setRegistryFilter(f)}
+                  className={`rounded-full px-3 py-1 text-[11px] font-medium transition ${
+                    registryFilter === f
+                      ? "bg-white/15 text-white border border-white/20"
+                      : "bg-white/5 text-white/40 border border-transparent hover:bg-white/10"
+                  }`}
                 >
-                  Clear
+                  {f.charAt(0).toUpperCase() + f.slice(1)}
                 </button>
-              </div>
+              ))}
+            </div>
+
+            {/* Pinned detail */}
+            {selectedKnowledge && (
+              <>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-white/40">
+                    Pinned Knowledge
+                  </span>
+                  <button
+                    onClick={() => setSelectedKnowledge(null)}
+                    className="text-xs text-white/30 transition hover:text-white/60"
+                  >
+                    Clear
+                  </button>
+                </div>
+                <KnowledgeDetail
+                  knowledge={selectedKnowledge}
+                  onVote={handleVote}
+                  voteLoading={voteLoading}
+                  voteResult={voteResult}
+                />
+              </>
             )}
-            {displayKnowledge ? (
-              <KnowledgeDetail
-                knowledge={displayKnowledge}
-                isPreview={!selectedKnowledge}
-              />
-            ) : (
-              <div className="flex h-32 items-center justify-center text-sm text-white/30">
-                {knowledgeItems.length > 0
-                  ? "Hover over the globe to explore knowledge"
-                  : "No knowledge entries yet"}
+
+            {/* Vote result banner */}
+            {voteResult && !selectedKnowledge && (
+              <div className={`rounded-lg p-2.5 text-xs ${
+                voteResult.success
+                  ? "bg-[#4B7F52]/20 text-[#4B7F52]"
+                  : "bg-red-500/10 text-red-400"
+              }`}>
+                {voteResult.success
+                  ? `Vote recorded — status: ${voteResult.status}`
+                  : `Error: ${voteResult.error}`}
               </div>
             )}
 
-            {/* All knowledge entries list */}
-            {!selectedKnowledge && !hoveredKnowledge && knowledgeItems.length > 0 && (
+            {/* Filtered entries list */}
+            {knowledgeItems.length > 0 ? (
               <div className="space-y-2">
-                <h4 className="text-xs font-semibold uppercase tracking-wider text-white/40">
-                  All Entries ({knowledgeItems.length})
-                </h4>
-                {knowledgeItems.map((k) => {
-                  const cat = CATEGORIES[k.category] || CATEGORIES.blockchain;
-                  return (
-                    <div
-                      key={k.id}
-                      className="flex cursor-pointer items-center gap-3 rounded-lg bg-white/5 p-3 transition hover:bg-white/10"
-                      onClick={() => setSelectedKnowledge(k)}
-                    >
-                      <span
-                        className="h-2.5 w-2.5 shrink-0 rounded-sm"
-                        style={{ backgroundColor: `rgb(${cat.color.join(",")})` }}
-                      />
-                      <span className="flex-1 truncate text-sm text-white/80">{k.title}</span>
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
-                        k.status === "approved"
-                          ? "bg-[#4B7F52]/30 text-[#4B7F52]"
-                          : k.status === "rejected"
-                            ? "bg-red-500/20 text-red-400"
-                            : "bg-yellow-500/20 text-yellow-400"
-                      }`}>
-                        {k.status}
-                      </span>
-                      <span className="text-xs text-white/30">
-                        {k.upvotes}/{k.downvotes}
-                      </span>
-                    </div>
-                  );
-                })}
+                {knowledgeItems
+                  .filter((k) => {
+                    if (registryFilter === "all") return true;
+                    return k.status === registryFilter;
+                  })
+                  .map((k) => {
+                    const cat = CATEGORIES[k.category] || CATEGORIES.blockchain;
+                    return (
+                      <div
+                        key={k.id}
+                        className="flex items-center gap-3 rounded-lg bg-white/5 p-3 transition hover:bg-white/10"
+                      >
+                        <span
+                          className="h-2.5 w-2.5 shrink-0 rounded-sm"
+                          style={{ backgroundColor: `rgb(${cat.color.join(",")})` }}
+                        />
+                        <span
+                          className="flex-1 cursor-pointer truncate text-sm text-white/80"
+                          onClick={() => setSelectedKnowledge(k)}
+                        >
+                          {k.title}
+                        </span>
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                          k.status === "approved"
+                            ? "bg-[#4B7F52]/30 text-[#4B7F52]"
+                            : k.status === "rejected"
+                              ? "bg-red-500/20 text-red-400"
+                              : "bg-yellow-500/20 text-yellow-400"
+                        }`}>
+                          {k.status}
+                        </span>
+                        <span className="shrink-0 text-xs text-white/30">
+                          {k.upvotes}/{k.downvotes}
+                        </span>
+                        {k.status === "pending" && (
+                          <div className="flex shrink-0 gap-1.5">
+                            <button
+                              onClick={() => handleVote(k.id, "approve")}
+                              disabled={voteLoading}
+                              className="rounded-md bg-[#4B7F52]/20 px-2.5 py-1 text-[10px] font-bold text-[#4B7F52] transition hover:bg-[#4B7F52]/40 disabled:opacity-40"
+                            >
+                              {voteLoading ? "..." : "Approve"}
+                            </button>
+                            <button
+                              onClick={() => handleVote(k.id, "reject")}
+                              disabled={voteLoading}
+                              className="rounded-md bg-red-500/20 px-2.5 py-1 text-[10px] font-bold text-red-400 transition hover:bg-red-500/40 disabled:opacity-40"
+                            >
+                              {voteLoading ? "..." : "Reject"}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
+            ) : (
+              <div className="flex h-20 items-center justify-center text-sm text-white/30">
+                No knowledge entries yet
               </div>
             )}
           </div>
@@ -860,6 +1168,7 @@ export function KnowledgeLayer() {
           onClose={() => setShowModal(false)}
           knowledgeItems={knowledgeItems}
           counts={counts}
+          onRefresh={fetchKnowledge}
         />
       )}
     </>

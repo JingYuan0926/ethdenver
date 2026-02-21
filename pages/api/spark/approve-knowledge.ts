@@ -265,29 +265,17 @@ export default async function handler(
 
     const author = knowledgeItem.author as string;
 
-    // Step 3: Self-vote block
-    if (voterAccountId === author) {
-      return res.status(400).json({
-        success: false,
-        error: "Cannot vote on your own knowledge submission",
-      });
-    }
+    // Step 3: Self-vote check — disabled for demo
+    // if (voterAccountId === author) { ... }
 
     // Step 4: Check existing votes for this itemId
     const existingVotes = categoryMessages.filter(
       (m) => m.action === "knowledge_vote" && m.itemId === itemId
     );
 
-    // Double-vote block
-    const alreadyVoted = existingVotes.some(
-      (v) => v.voter === voterAccountId
-    );
-    if (alreadyVoted) {
-      return res.status(400).json({
-        success: false,
-        error: "You have already voted on this knowledge item",
-      });
-    }
+    // Double-vote check — disabled for demo
+    // const alreadyVoted = existingVotes.some((v) => v.voter === voterAccountId);
+    // if (alreadyVoted) { ... }
 
     // Already finalized check
     const isFinalized = categoryMessages.some(

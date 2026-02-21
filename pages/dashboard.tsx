@@ -20,13 +20,14 @@ const REGISTER_STEPS = [
 ];
 
 function AuthGate() {
-  const { setAgent, setPrivateKey } = useAgent();
+  const { setAgent, setPrivateKey, savedKey } = useAgent();
   const router = useRouter();
   const [mode, setMode] = useState<"register" | "load">(
     router.query.mode === "load" ? "load" : "register"
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [autoLoading, setAutoLoading] = useState(!!savedKey);
 
   // Register fields
   const [agentType, setAgentType] = useState<"human" | "ai">("human");
@@ -68,6 +69,57 @@ function AuthGate() {
   const [currentStep, setCurrentStep] = useState(0);
   const [stepsDone, setStepsDone] = useState(false);
   const [registerError, setRegisterError] = useState("");
+
+  // Auto-login from saved key
+  useEffect(() => {
+    if (!savedKey) return;
+    setAutoLoading(true);
+    fetch("/api/spark/load-agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hederaPrivateKey: savedKey }),
+    })
+      .then((res) => res.json())
+      .then((result) => {
+        if (!result.success) {
+          localStorage.removeItem("spark_private_key");
+          setAutoLoading(false);
+          return;
+        }
+        const agent: AgentData = {
+          botId: result.botId || "",
+          hederaAccountId: result.hederaAccountId,
+          hederaPublicKey: result.hederaPublicKey,
+          evmAddress: result.evmAddress,
+          hbarBalance: result.hbarBalance || 0,
+          tokens: result.tokens || [],
+          masterTopicId: result.masterTopicId,
+          botTopicId: result.botTopicId,
+          voteTopicId: result.voteTopicId,
+          iNftTokenId: result.iNftTokenId || 0,
+          isAuthorized: result.isAuthorized || false,
+          agentProfile: result.agentProfile || null,
+          intelligentData: (result.intelligentData || []).map(
+            (d: { dataDescription: string; dataHash: string }) => ({
+              dataDescription: d.dataDescription,
+              dataHash: d.dataHash || "",
+            })
+          ),
+          zgRootHash: result.zgRootHash || "",
+          upvotes: result.upvotes || 0,
+          downvotes: result.downvotes || 0,
+          netReputation: result.netReputation || 0,
+          botMessageCount: result.botMessageCount || 0,
+          registeredAt: result.registeredAt || "",
+        };
+        setAgent(agent);
+        setPrivateKey(savedKey);
+      })
+      .catch(() => {
+        localStorage.removeItem("spark_private_key");
+        setAutoLoading(false);
+      });
+  }, [savedKey, setAgent, setPrivateKey]);
 
   // Simulate step progress while API call runs
   useEffect(() => {
@@ -213,6 +265,17 @@ function AuthGate() {
     setLoading(false);
   }
 
+  if (autoLoading) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center bg-[#f5f0e8]">
+        <div className="flex flex-col items-center gap-4">
+          <div className="h-8 w-8 animate-spin rounded-full border-3 border-[#DD6E42] border-t-transparent" />
+          <p className="text-sm font-medium text-[#483519]/70">Loading your agent...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen flex-col items-center justify-center bg-[#f5f0e8]">
       <div className="w-full max-w-md rounded-2xl bg-white/80 p-6 shadow-lg backdrop-blur-sm">
@@ -289,24 +352,24 @@ function AuthGate() {
                 </button>
               </>
             ) : (
-              <div className="rounded-lg bg-[#483519]/5 p-4">
+              <div className="rounded-xl border border-[#483519]/10 bg-white p-4 shadow-sm">
                 <p className="text-xs font-semibold text-[#483519]">
                   Load via CLI
                 </p>
-                <p className="mt-1 text-[10px] text-[#483519]/60">
+                <p className="mt-1 text-[10px] text-[#483519]/50">
                   Use the SPARK skill to load your agent from saved identity:
                 </p>
-                <div className="mt-2 rounded-md bg-[#1e1e1e] p-3">
-                  <code className="block text-[11px] leading-relaxed text-green-400">
-                    <span className="text-gray-500"># Load saved agent</span>{"\n"}
-                    node skills/spark/spark-api.js load{"\n\n"}
-                    <span className="text-gray-500"># Or via curl</span>{"\n"}
-                    curl -X POST https://one-spark-nine.vercel.app/api/spark/load-agent \{"\n"}
-                    {"  "}-H &quot;Content-Type: application/json&quot; \{"\n"}
+                <div className="mt-2.5 rounded-lg border border-[#483519]/10 bg-[#f5f0e8]/60 p-3">
+                  <code className="block text-[11px] leading-relaxed text-[#483519]">
+                    <span className="text-[#483519]/40"># Load saved agent</span>{"\n"}
+                    <span className="text-[#4B7F52]">node</span> skills/spark/spark-api.js load{"\n\n"}
+                    <span className="text-[#483519]/40"># Or via curl</span>{"\n"}
+                    <span className="text-[#4B7F52]">curl</span> -X POST https://one-spark-nine.vercel.app/api/spark/load-agent \{"\n"}
+                    {"  "}-H <span className="text-[#DD6E42]">&quot;Content-Type: application/json&quot;</span> \{"\n"}
                     {"  "}-d {`'{"hederaPrivateKey":"YOUR_KEY"}'`}
                   </code>
                 </div>
-                <p className="mt-2 text-[10px] text-[#483519]/50">
+                <p className="mt-2 text-[10px] text-[#483519]/40">
                   Identity is stored at <span className="font-mono">~/.openclaw/spark-identity.json</span>
                 </p>
                 <a
@@ -441,20 +504,20 @@ function AuthGate() {
             ) : (
               <>
                 {/* Deploy via CLI */}
-                <div className="rounded-lg bg-[#483519]/5 p-4">
+                <div className="rounded-xl border border-[#483519]/10 bg-white p-4 shadow-sm">
                   <p className="text-xs font-semibold text-[#483519]">
                     Deploy via CLI
                   </p>
-                  <p className="mt-1 text-[10px] text-[#483519]/60">
+                  <p className="mt-1 text-[10px] text-[#483519]/50">
                     Install the SPARK skill, then register your agent:
                   </p>
-                  <div className="mt-2 rounded-md bg-[#1e1e1e] p-3">
-                    <code className="block text-[11px] leading-relaxed text-green-400">
-                      <span className="text-gray-500"># Install skill</span>{"\n"}
-                      openclaw skill install spark{"\n\n"}
-                      <span className="text-gray-500"># Register agent with SKILL.md</span>{"\n"}
-                      curl -X POST https://one-spark-nine.vercel.app/api/spark/register-agent \{"\n"}
-                      {"  "}-H &quot;Content-Type: application/json&quot; \{"\n"}
+                  <div className="mt-2.5 rounded-lg border border-[#483519]/10 bg-[#f5f0e8]/60 p-3">
+                    <code className="block text-[11px] leading-relaxed text-[#483519]">
+                      <span className="text-[#483519]/40"># Install skill</span>{"\n"}
+                      <span className="text-[#4B7F52]">openclaw</span> skill install spark{"\n\n"}
+                      <span className="text-[#483519]/40"># Register agent with SKILL.md</span>{"\n"}
+                      <span className="text-[#4B7F52]">curl</span> -X POST https://one-spark-nine.vercel.app/api/spark/register-agent \{"\n"}
+                      {"  "}-H <span className="text-[#DD6E42]">&quot;Content-Type: application/json&quot;</span> \{"\n"}
                       {"  "}-d @skills/spark/SKILL.md
                     </code>
                   </div>
@@ -462,7 +525,7 @@ function AuthGate() {
                     href="https://one-spark-nine.vercel.app"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="mt-2 inline-block text-[11px] font-semibold text-[#DD6E42] underline hover:text-[#c55e38]"
+                    className="mt-2.5 inline-block text-[11px] font-semibold text-[#DD6E42] underline hover:text-[#c55e38]"
                   >
                     View full docs
                   </a>
@@ -550,13 +613,25 @@ function AuthGate() {
 }
 
 function DashboardContent() {
-  const { agent } = useAgent();
+  const { agent, signOut } = useAgent();
+  const router = useRouter();
 
   if (!agent) return <AuthGate />;
 
   return (
     <div className="flex h-screen flex-col bg-[#f5f0e8]">
-      <Navbar />
+      <div className="relative">
+        <Navbar />
+        <button
+          onClick={() => {
+            signOut();
+            router.push("/dashboard");
+          }}
+          className="absolute right-[2.5%] top-1/2 -translate-y-1/2 rounded-lg border border-[#483519]/20 bg-white/80 px-4 py-1.5 text-sm font-medium text-[#483519] transition hover:bg-red-50 hover:text-red-600 hover:border-red-200"
+        >
+          Sign Out
+        </button>
+      </div>
 
       <div className="grid min-h-0 flex-1 grid-cols-4 grid-rows-2 gap-4 px-[2.5%] pt-[3vh] pb-[3vh]">
         <AgentStatus />
