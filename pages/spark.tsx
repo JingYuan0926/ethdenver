@@ -50,6 +50,7 @@ export default function SparkPage() {
     author: string;
     content: string;
     category: string;
+    accessTier: "public" | "gated";
     zgRootHash: string;
     timestamp: string;
     approvals: number;
@@ -483,6 +484,7 @@ export default function SparkPage() {
         body: JSON.stringify({
           content: kContent,
           category: kCategory,
+          accessTier: "public",
           hederaPrivateKey: kPrivateKey,
         }),
       });
@@ -1400,9 +1402,10 @@ export default function SparkPage() {
         )}
 
         {registryItems.length > 0 && (() => {
-          const approvedCount = registryItems.filter((i) => i.status === "approved").length;
-          const pendingCount = registryItems.filter((i) => i.status === "pending").length;
-          const rejectedCount = registryItems.filter((i) => i.status === "rejected").length;
+          const publicItems = registryItems.filter((i) => i.accessTier !== "gated");
+          const approvedCount = publicItems.filter((i) => i.status === "approved").length;
+          const pendingCount = publicItems.filter((i) => i.status === "pending").length;
+          const rejectedCount = publicItems.filter((i) => i.status === "rejected").length;
 
           return (
             <div style={{ marginTop: 16 }}>
@@ -1416,7 +1419,7 @@ export default function SparkPage() {
                 }}
               >
                 <div style={{ textAlign: "center", padding: "12px 20px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, minWidth: 80 }}>
-                  <div style={{ fontSize: 24, fontWeight: "bold" }}>{registryItems.length}</div>
+                  <div style={{ fontSize: 24, fontWeight: "bold" }}>{publicItems.length}</div>
                   <div style={{ color: "#64748b", fontSize: 11 }}>Total</div>
                 </div>
                 <div style={{ textAlign: "center", padding: "12px 20px", background: "#fefce8", border: "1px solid #fde047", borderRadius: 8, minWidth: 80 }}>
@@ -1495,6 +1498,7 @@ export default function SparkPage() {
                 </thead>
                 <tbody>
                   {registryItems
+                    .filter((item) => item.accessTier !== "gated")
                     .filter((item) => {
                       if (registryFilter === "accepted") return item.status === "approved";
                       if (registryFilter === "all") return true;

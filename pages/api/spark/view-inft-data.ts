@@ -6,6 +6,11 @@ import { join } from "path";
 import { tmpdir } from "os";
 
 import { SPARKINFT_ABI, SPARKINFT_ADDRESS } from "@/lib/sparkinft-abi";
+import {
+  SUBSCRIPTION_VAULT_ADDRESS,
+  SUBSCRIPTION_VAULT_ABI,
+} from "@/lib/subscription-vault-abi";
+import { HEDERA_RPC_URL } from "@/lib/payroll-vault-abi";
 
 // ── 0G Config ────────────────────────────────────────────────────
 const ZG_RPC = "https://evmrpc-testnet.0g.ai";
@@ -19,7 +24,7 @@ export default async function handler(
     return res.status(405).json({ success: false, error: "POST only" });
   }
 
-  const { rootHash, tokenId } = req.body;
+  const { rootHash, tokenId, subscriberAddress } = req.body;
 
   // Mode 1: Download a specific file by rootHash
   if (rootHash) {
@@ -34,11 +39,53 @@ export default async function handler(
       unlinkSync(tmpPath);
 
       // Try to parse as JSON
-      let parsed;
+      let parsed: unknown;
       try {
         parsed = JSON.parse(content);
       } catch {
         parsed = content;
+      }
+
+      // Gate check: if this is gated knowledge, verify subscription
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        (parsed as Record<string, unknown>).accessTier === "gated"
+      ) {
+        if (!subscriberAddress) {
+          return res.status(403).json({
+            success: false,
+            error: "Subscription required. Provide subscriberAddress to access gated knowledge.",
+            gated: true,
+          });
+        }
+
+        // Check subscription status on the vault — match by agent-specific name
+        const expectedName = `gated-knowledge-${subscriberAddress.toLowerCase()}`;
+        const hProvider = new ethers.JsonRpcProvider(HEDERA_RPC_URL);
+        const vault = new ethers.Contract(
+          SUBSCRIPTION_VAULT_ADDRESS,
+          SUBSCRIPTION_VAULT_ABI,
+          hProvider
+        );
+        const allSubs = await vault.getAllSubscriptions();
+        let hasAccess = false;
+        for (const sub of allSubs) {
+          if (
+            sub.active &&
+            (sub.name as string).toLowerCase() === expectedName
+          ) {
+            const st = Number(sub.status);
+            if (st === 1 || st === 2) { hasAccess = true; break; }
+          }
+        }
+        if (!hasAccess) {
+          return res.status(403).json({
+            success: false,
+            error: "Active subscription required to access gated knowledge. Subscribe first.",
+            gated: true,
+          });
+        }
       }
 
       return res.status(200).json({

@@ -127,12 +127,20 @@ export default async function handler(
     content,
     category = "",
     hederaPrivateKey,
+    accessTier = "public",
   } = req.body;
 
   if (!content || !hederaPrivateKey) {
     return res.status(400).json({
       success: false,
       error: "Required: content, hederaPrivateKey",
+    });
+  }
+
+  if (accessTier !== "public" && accessTier !== "gated") {
+    return res.status(400).json({
+      success: false,
+      error: "accessTier must be 'public' or 'gated'",
     });
   }
 
@@ -172,6 +180,7 @@ export default async function handler(
       itemId,
       category,
       content,
+      accessTier,
       author: accountId,
       version: 1,
       timestamp: new Date().toISOString(),
@@ -210,6 +219,7 @@ export default async function handler(
       zgRootHash,
       category,
       content,
+      accessTier,
       timestamp: new Date().toISOString(),
     });
 
@@ -239,6 +249,29 @@ export default async function handler(
     );
 
     // ────────────────────────────────────────────────────────────
+    // Step 4 (gated only): Auto-approve — skip voting for demo
+    // ────────────────────────────────────────────────────────────
+    let autoApproved = false;
+    let autoApproveError: string | null = null;
+    if (accessTier === "gated") {
+      try {
+        const approvedMsg = JSON.stringify({
+          action: "knowledge_approved",
+          itemId,
+          author: accountId,
+          approvedBy: ["auto-approved"],
+          timestamp: new Date().toISOString(),
+        });
+
+        await submitToTopic(client, categoryTopicId, approvedMsg, operatorKey);
+        autoApproved = true;
+      } catch (err) {
+        autoApproveError = err instanceof Error ? err.message : String(err);
+        console.error("[submit-knowledge] auto-approve failed:", autoApproveError);
+      }
+    }
+
+    // ────────────────────────────────────────────────────────────
     // Return
     // ────────────────────────────────────────────────────────────
     return res.status(200).json({
@@ -248,6 +281,9 @@ export default async function handler(
       zgRootHash,
       zgUploadTxHash: zgUploadTxHash ?? "",
       category,
+      accessTier,
+      autoApproved,
+      autoApproveError,
       categoryTopicId,
       masterTopicId,
       categorySeqNo,

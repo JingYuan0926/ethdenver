@@ -9,6 +9,11 @@ import { join } from "path";
 
 import { getHederaClient, getOperatorKey } from "@/lib/hedera";
 import { SPARKINFT_ABI, SPARKINFT_ADDRESS } from "@/lib/sparkinft-abi";
+import {
+  PAYROLL_VAULT_ADDRESS,
+  PAYROLL_VAULT_ABI,
+  HEDERA_RPC_URL,
+} from "@/lib/payroll-vault-abi";
 
 // ── Mirror Node ──────────────────────────────────────────────────
 const MIRROR_URL = "https://testnet.mirrornode.hedera.com";
@@ -74,11 +79,11 @@ async function resolveVoterAccount(
   return mirrorData.accounts[0].account;
 }
 
-// Resolve target agent's voteTopicId + botTopicId + iNftTokenId from master topic
+// Resolve target agent's voteTopicId + botTopicId + iNftTokenId + evmAddress from master topic
 async function resolveAgentTopics(
   masterTopicId: string,
   targetAccountId: string
-): Promise<{ voteTopicId: string; botTopicId: string; iNftTokenId: number }> {
+): Promise<{ voteTopicId: string; botTopicId: string; iNftTokenId: number; evmAddress: string }> {
   const topicRes = await fetch(
     `${MIRROR_URL}/api/v1/topics/${masterTopicId}/messages?limit=100`
   );
@@ -97,6 +102,7 @@ async function resolveAgentTopics(
           voteTopicId: decoded.voteTopicId,
           botTopicId: decoded.botTopicId,
           iNftTokenId: decoded.iNftTokenId || 0,
+          evmAddress: decoded.evmAddress || "",
         };
       }
     } catch {
@@ -349,6 +355,7 @@ export default async function handler(
     let status: "pending" | "approved" | "rejected" = "pending";
     let reputationEffect: string | null = null;
     let inftSyncResult: { recordContribTxHash?: string; reputationTxHash: string; updateDataTxHash?: string } | null = null;
+    let payrollResult: { agentIdx?: string; startTxHash?: string } | null = null;
 
     if (approvals >= CONSENSUS_THRESHOLD) {
       status = "approved";
@@ -374,7 +381,7 @@ export default async function handler(
       await (await approvedTx.execute(client)).getReceipt(client);
 
       // Mint HCS-20 upvote on author's vote topic
-      const { voteTopicId: authorVoteTopicId } = await resolveAgentTopics(
+      const { voteTopicId: authorVoteTopicId, evmAddress: authorEvmAddress } = await resolveAgentTopics(
         config.masterTopicId,
         author
       );
@@ -403,6 +410,50 @@ export default async function handler(
         inftSyncResult = await syncInftOnConsensus(author, config.masterTopicId!, zgHash, true);
       } catch (inftErr) {
         console.error("[approve-knowledge] iNFT sync failed (approval):", inftErr);
+      }
+
+      // Step 8: If gated knowledge, add author as payroll agent in vault for payouts
+      const knowledgeAccessTier = knowledgeItem.accessTier as string | undefined;
+      if (knowledgeAccessTier === "gated" && authorEvmAddress) {
+        try {
+          const hederaPrivKey = process.env.HEDERA_PRIVATE_KEY;
+          if (hederaPrivKey) {
+            const hProvider = new ethers.JsonRpcProvider(HEDERA_RPC_URL);
+            const hWallet = new ethers.Wallet(hederaPrivKey, hProvider);
+            const vault = new ethers.Contract(PAYROLL_VAULT_ADDRESS, PAYROLL_VAULT_ABI, hWallet);
+
+            // Check if author is already a payroll agent
+            const alreadyAgent = await vault.isAgent(authorEvmAddress);
+            if (!alreadyAgent) {
+              // Add as payroll agent: 0.5 USDC per 60s payout
+              const payoutAmount = ethers.parseUnits("0.5", 6); // 0.5 USDC (6 decimals)
+              const payoutInterval = BigInt(60); // every 60 seconds
+
+              const addTx = await vault.addAgent(
+                authorEvmAddress,
+                `contributor:${author}`,
+                payoutAmount,
+                payoutInterval
+              );
+              const addReceipt = await addTx.wait();
+
+              // Get the agent index from the event or count
+              const agentCount = await vault.getAgentCount();
+              const agentIdx = Number(agentCount) - 1;
+
+              // Start the payroll schedule
+              const startTx = await vault.startPayroll(BigInt(agentIdx));
+              await startTx.wait();
+
+              payrollResult = {
+                agentIdx: String(agentIdx),
+                startTxHash: startTx.hash,
+              };
+            }
+          }
+        } catch (payrollErr) {
+          console.error("[approve-knowledge] Payroll setup failed:", payrollErr);
+        }
       }
 
     } else if (rejections >= CONSENSUS_THRESHOLD) {
@@ -475,6 +526,8 @@ export default async function handler(
       reputationEffect,
       inftSynced: !!inftSyncResult,
       inftSyncTxHashes: inftSyncResult || null,
+      payrollStarted: !!payrollResult,
+      payrollResult: payrollResult || null,
     });
   } catch (err: unknown) {
     return res.status(500).json({

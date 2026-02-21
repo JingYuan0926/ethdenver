@@ -6,6 +6,10 @@ import {
   HEDERA_RPC_URL,
 } from "@/lib/subscription-vault-abi";
 
+const ERC20_ABI = [
+  "function approve(address spender, uint256 amount) returns (bool)",
+];
+
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
@@ -29,16 +33,18 @@ export default async function handler(
     });
   }
 
-  const privateKey = process.env.HEDERA_PRIVATE_KEY;
-  if (!privateKey) {
-    return res
-      .status(500)
-      .json({ success: false, error: "Missing HEDERA_PRIVATE_KEY in env" });
-  }
-
   try {
     const provider = new ethers.JsonRpcProvider(HEDERA_RPC_URL);
+
+    // Always use operator key to pay for subscriptions
+    const privateKey = process.env.HEDERA_PRIVATE_KEY;
+    if (!privateKey) {
+      return res
+        .status(500)
+        .json({ success: false, error: "Missing HEDERA_PRIVATE_KEY in env" });
+    }
     const wallet = new ethers.Wallet(privateKey, provider);
+
     const vault = new ethers.Contract(
       vaultAddr,
       SUBSCRIPTION_VAULT_ABI,

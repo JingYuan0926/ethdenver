@@ -107,7 +107,7 @@ export default async function handler(
     const client = getHederaClient();
 
     // Resolve voter identity
-    const voterKey = PrivateKey.fromStringED25519(voterPrivateKey);
+    const voterKey = PrivateKey.fromString(voterPrivateKey);
     const voterAccountId = await resolveVoterAccount(voterKey);
 
     // Prevent self-voting

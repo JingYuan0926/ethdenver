@@ -54,9 +54,9 @@ export default async function handler(
 
   try {
     // ────────────────────────────────────────────────────────────
-    // Step 1: Derive public key from private key
+    // Step 1: Derive public key from private key (auto-detect type)
     // ────────────────────────────────────────────────────────────
-    const botKey = PrivateKey.fromStringED25519(hederaPrivateKey);
+    const botKey = PrivateKey.fromString(hederaPrivateKey);
     const publicKeyHex = botKey.publicKey.toStringRaw();
     const publicKeyDer = botKey.publicKey.toString();
 

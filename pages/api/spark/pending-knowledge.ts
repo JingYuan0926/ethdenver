@@ -38,6 +38,7 @@ interface KnowledgeItem {
   author: string;
   content: string;
   category: string;
+  accessTier: "public" | "gated";
   zgRootHash: string;
   timestamp: string;
   approvals: number;
@@ -126,6 +127,7 @@ export default async function handler(
           author: sub.author as string,
           content: (sub.content as string) || "",
           category: cat,
+          accessTier: (sub.accessTier as "public" | "gated") || "public",
           zgRootHash: (sub.zgRootHash as string) || "",
           timestamp: (sub.timestamp as string) || "",
           approvals: approvalCount,
